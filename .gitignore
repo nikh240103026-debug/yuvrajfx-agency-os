@@ -1,0 +1,22 @@
+node_modules/
+dist/
+coverage/
+
+# Local data: your real clients, invoices, sessions and backups live here. Never commit it.
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+Thumbs.db
+
+# Downloaded tools (cloudflared)
+tools/

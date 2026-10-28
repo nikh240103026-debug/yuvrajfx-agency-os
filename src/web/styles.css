@@ -1,0 +1,260 @@
+@import 'tailwindcss';
+
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Dark-only brand surface with restrained violet. Chart colours were validated
+   for colour-vision deficiency against the card surface (#131318).
+   `static` keeps every token as a CSS variable even when only used via var() in inline styles. */
+@theme static {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+  --color-bg: #0b0b0f;
+  --color-bg-subtle: #0e0e13;
+  --color-surface: #131318;
+  --color-surface-2: #18181f;
+  --color-surface-3: #1f1f28;
+  --color-line: rgb(255 255 255 / 0.07);
+  --color-line-strong: rgb(255 255 255 / 0.12);
+
+  --color-ink: #ededf3;
+  --color-ink-2: #a3a3b2;
+  --color-ink-3: #8b8b9a;
+
+  --color-accent: #6c5ce7;
+  --color-accent-hover: #5f4fd8;
+  --color-accent-ink: #b1a6ff;
+  --color-accent-soft: rgb(108 92 231 / 0.14);
+
+  /* Status (fixed meaning, always paired with an icon or label) */
+  --color-good: #4ccb6a;
+  --color-good-dot: #0ca30c;
+  --color-warn: #fab219;
+  --color-serious: #f0a07c;
+  --color-serious-dot: #ec835a;
+  --color-bad: #f2a3a3;
+  --color-bad-dot: #d03b3b;
+  --color-info: #8fb8f0;
+
+  /* Chart series: collected · invoiced · expenses (all-pairs CVD validated) */
+  --color-series-1: #9085e9;
+  --color-series-2: #199e70;
+  --color-series-3: #d95926;
+
+  /* Production stages, an ordinal violet ramp (Backlog → Delivered) */
+  --color-stage-1: #4c3f8a;
+  --color-stage-2: #5f54a1;
+  --color-stage-3: #7469b8;
+  --color-stage-4: #897fd1;
+  --color-stage-5: #9f96e9;
+  --color-stage-6: #b6adff;
+  --color-stage-7: #cdc4ff;
+
+  --radius-card: 14px;
+
+  --animate-enter: enter 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-pop: pop 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-slide-in: slide-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: translateY(4px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes shimmer {
+    from { background-position: -400px 0; }
+    to { background-position: 400px 0; }
+  }
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateX(24px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+  }
+  body {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    min-height: 100dvh;
+  }
+  body::before {
+    /* A faint violet glow at the top of the page. */
+    content: '';
+    position: fixed;
+    inset: -20vh 0 auto 0;
+    height: 60vh;
+    pointer-events: none;
+    background: radial-gradient(60% 60% at 50% 0%, rgb(108 92 231 / 0.09), transparent 70%);
+    z-index: 0;
+  }
+  #root {
+    position: relative;
+    z-index: 1;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
+    color: var(--color-ink);
+  }
+  ::selection {
+    background: rgb(108 92 231 / 0.45);
+  }
+  :focus-visible {
+    outline: 2px solid rgb(177 166 255 / 0.85);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator {
+    filter: invert(0.75);
+    cursor: pointer;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.09);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(255 255 255 / 0.16);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  dialog {
+    color: inherit;
+  }
+  dialog::backdrop {
+    background: rgb(5 5 8 / 0.62);
+    backdrop-filter: blur(3px);
+  }
+}
+
+@layer components {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .skeleton {
+    background: linear-gradient(90deg, rgb(255 255 255 / 0.04) 0, rgb(255 255 255 / 0.08) 120px, rgb(255 255 255 / 0.04) 240px);
+    background-size: 800px 100%;
+    animation: var(--animate-shimmer);
+    border-radius: 8px;
+  }
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+  .field-input {
+    width: 100%;
+    height: 36px;
+    border-radius: 9px;
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-line-strong);
+    padding: 0 11px;
+    color: var(--color-ink);
+    transition: border-color 120ms, box-shadow 120ms, background 120ms;
+  }
+  .field-input::placeholder {
+    color: rgb(139 139 154 / 0.75);
+  }
+  .field-input:hover {
+    border-color: rgb(255 255 255 / 0.18);
+  }
+  .field-input:focus {
+    outline: none;
+    border-color: rgb(140 126 240 / 0.9);
+    box-shadow: 0 0 0 3px rgb(108 92 231 / 0.22);
+  }
+  .field-input[aria-invalid='true'] {
+    border-color: rgb(208 59 59 / 0.85);
+  }
+  textarea.field-input {
+    height: auto;
+    min-height: 84px;
+    padding: 8px 11px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  select.field-input {
+    appearance: none;
+    padding-right: 30px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%238b8b9a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+  }
+  select.field-input option {
+    background: #18181f;
+    color: var(--color-ink);
+  }
+  .label-caps {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Print (invoices, reports) ────────────────────────────────────────────── */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  body::before {
+    display: none;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    max-width: none !important;
+    padding: 0 !important;
+  }
+}
