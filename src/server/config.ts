@@ -1,8 +1,12 @@
+
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+export const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../..',
+);
 
 export type SmtpConfig = {
   host: string;
@@ -17,6 +21,7 @@ export type Config = {
   host: string;
   port: number;
   dbPath: string;
+  databaseUrl: string | null;
   cookieSecure: boolean;
   isDev: boolean;
   smtp: SmtpConfig | null;
@@ -32,24 +37,28 @@ function flag(argv: string[], name: string): string | undefined {
   return hit ? hit.slice(name.length + 3) : undefined;
 }
 
-/**
- * Reads .env (if present), the environment, and optional --db=<file> / --port=<n> flags.
- * Secrets are never hardcoded; SMTP stays off unless configured.
- */
 export function loadConfig(argv: string[] = process.argv): Config {
   const envFile = path.join(ROOT, '.env');
-  if (existsSync(envFile)) process.loadEnvFile(envFile);
+
+  if (existsSync(envFile)) {
+    process.loadEnvFile(envFile);
+  }
+
   const env = process.env;
-  console.log("[diagnostic] DB_PATH =", JSON.stringify(process.env.DB_PATH));
-  console.log("[diagnostic] DB_PATH flag =", process.argv.find(
-  (arg) => arg.startsWith("--db=")
-) ?? "(none)");
-  const dbPath = flag(argv, 'db') || env.DB_PATH?.trim() || 'data/agency.db';
+  const dbPath =
+    flag(argv, 'db') || env.DB_PATH?.trim() || 'data/agency.db';
+
   const smtpHost = env.SMTP_HOST?.trim();
+  const databaseUrl = env.DATABASE_URL?.trim() || null;
+
   return {
     host: env.HOST?.trim() || '127.0.0.1',
     port: Number(flag(argv, 'port')) || Number(env.PORT) || 4747,
-    dbPath: dbPath === ':memory:' ? dbPath : path.resolve(ROOT, dbPath),
+    dbPath:
+      dbPath === ':memory:'
+        ? dbPath
+        : path.resolve(ROOT, dbPath),
+    databaseUrl,
     cookieSecure: bool(env.COOKIE_SECURE),
     isDev: argv.includes('--dev'),
     smtp: smtpHost
@@ -59,7 +68,10 @@ export function loadConfig(argv: string[] = process.argv): Config {
           secure: bool(env.SMTP_SECURE),
           user: env.SMTP_USER?.trim() || null,
           pass: env.SMTP_PASS || null,
-          from: env.SMTP_FROM?.trim() || env.SMTP_USER?.trim() || 'no-reply@localhost',
+          from:
+            env.SMTP_FROM?.trim() ||
+            env.SMTP_USER?.trim() ||
+            'no-reply@localhost',
         }
       : null,
   };

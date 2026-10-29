@@ -18,7 +18,7 @@ export function makeApp(opts: { now?: string; recordingMailer?: boolean } = {}) 
   migrate(db);
   let now = new Date(opts.now ?? '2026-10-27T06:30:00.000Z');
   const mailer = opts.recordingMailer ? createRecordingMailer() : createMailer(null);
-  const config: Config = { host: '127.0.0.1', port: 0, dbPath: ':memory:', cookieSecure: false, isDev: false, smtp: null };
+  const config: Config = { host: '127.0.0.1', port: 0, dbPath: ':memory:', databaseUrl: null, cookieSecure: false, isDev: false, smtp: null };
   const ctx = createContext({ db, config, mailer, clock: { now: () => now } });
   const app = createApp(ctx);
   return {
