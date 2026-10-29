@@ -40,6 +40,10 @@ export function loadConfig(argv: string[] = process.argv): Config {
   const envFile = path.join(ROOT, '.env');
   if (existsSync(envFile)) process.loadEnvFile(envFile);
   const env = process.env;
+  console.log("[diagnostic] DB_PATH =", JSON.stringify(process.env.DB_PATH));
+  console.log("[diagnostic] DB_PATH flag =", process.argv.find(
+  (arg) => arg.startsWith("--db=")
+) ?? "(none)");
   const dbPath = flag(argv, 'db') || env.DB_PATH?.trim() || 'data/agency.db';
   const smtpHost = env.SMTP_HOST?.trim();
   return {
