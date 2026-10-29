@@ -1,0 +1,1397 @@
+﻿
+========== src/server/app.ts ==========
+import express, { type Express } from 'express';
+import helmet from 'helmet';
+import type { AppContext } from './context.ts';
+import { csrfGuard, requireAdmin, requireClient, requireStaff, sessionMiddleware } from './lib/auth.ts';
+import { errorHandler, HttpError } from './lib/http.ts';
+import { authRouter } from './routes/auth.ts';
+import { clientsRouter } from './routes/clients.ts';
+import { teamRouter } from './routes/team.ts';
+import { deliverablesRouter, feedbackRouter, projectsRouter } from './routes/projects.ts';
+import { invoicesRouter, paymentsRouter } from './routes/invoices.ts';
+import { expensesRouter } from './routes/expenses.ts';
+import { financeRouter } from './routes/finance.ts';
+import { leadsRouter } from './routes/leads.ts';
+import { recurringRouter, tasksRouter } from './routes/tasks.ts';
+import { automationsRouter, outboxRouter } from './routes/automations.ts';
+import { settingsRouter } from './routes/settings.ts';
+import { portalRouter } from './routes/portal.ts';
+import { activityRouter, calendarRouter, dashboardRouter, notificationsRouter, searchRouter } from './routes/workspace.ts';
+
+/** The API. Static files / the Vite dev server are mounted by index.ts after this. */
+export function createApp(ctx: AppContext): Express {
+  const app = express();
+  app.disable('x-powered-by');
+  app.set('trust proxy', false);
+  app.set('query parser', 'simple');
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: ctx.config.isDev
+        ? false
+        : {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'"],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              imgSrc: ["'self'", 'data:', 'blob:'],
+              fontSrc: ["'self'", 'data:'],
+              connectSrc: ["'self'"],
+              frameAncestors: ["'none'"],
+              formAction: ["'self'"],
+              objectSrc: ["'none'"],
+              baseUri: ["'self'"],
+              upgradeInsecureRequests: null,
+            },
+          },
+      crossOriginEmbedderPolicy: false,
+      hsts: ctx.config.cookieSecure,
+    }),
+  );
+
+  app.use('/api', express.json({ limit: '5mb' }));
+  app.use('/api', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+  app.use('/api', sessionMiddleware(ctx));
+  app.use('/api', csrfGuard);
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true, time: ctx.nowIso() });
+  });
+
+  app.use('/api/auth', authRouter(ctx));
+  app.use('/api/portal', requireClient, portalRouter(ctx));
+
+  // Staff (owner, admin, team member)
+  app.use('/api/dashboard', requireStaff, dashboardRouter(ctx));
+  app.use('/api/clients', requireStaff, clientsRouter(ctx));
+  app.use('/api/team', requireStaff, teamRouter(ctx));
+  app.use('/api/projects', requireStaff, projectsRouter(ctx));
+  app.use('/api/deliverables', requireStaff, deliverablesRouter(ctx));
+  app.use('/api/feedback', requireStaff, feedbackRouter(ctx));
+  app.use('/api/tasks', requireStaff, tasksRouter(ctx));
+  app.use('/api/recurring', requireStaff, recurringRouter(ctx));
+  app.use('/api/calendar', requireStaff, calendarRouter(ctx));
+  app.use('/api/notifications', requireStaff, notificationsRouter(ctx));
+  app.use('/api/activity', requireStaff, activityRouter(ctx));
+  app.use('/api/search', requireStaff, searchRouter(ctx));
+
+  // Owner/admin only: money, sales, automation, settings
+  app.use('/api/invoices', requireAdmin, invoicesRouter(ctx));
+  app.use('/api/payments', requireAdmin, paymentsRouter(ctx));
+  app.use('/api/expenses', requireAdmin, expensesRouter(ctx));
+  app.use('/api/finance', requireAdmin, financeRouter(ctx));
+  app.use('/api/leads', requireAdmin, leadsRouter(ctx));
+  app.use('/api/automations', requireAdmin, automationsRouter(ctx));
+  app.use('/api/outbox', requireAdmin, outboxRouter(ctx));
+  app.use('/api/settings', requireAdmin, settingsRouter(ctx));
+
+  app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Unknown API endpoint.')));
+  app.use('/api', errorHandler);
+  return app;
+}
+
+========== src/server/index.ts ==========
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
+import express from 'express';
+import { loadConfig, ROOT } from './config.ts';
+import { Db } from './db/db.ts';
+import { migrate } from './db/migrations.ts';
+import { createContext } from './context.ts';
+import { createMailer } from './services/mailer.ts';
+import { createApp } from './app.ts';
+import { startScheduler } from './services/automations.ts';
+
+const config = loadConfig();
+if (config.dbPath !== ':memory:') mkdirSync(path.dirname(config.dbPath), { recursive: true });
+const db = new Db(config.dbPath);
+const applied = migrate(db);
+const ctx = createContext({ db, config, mailer: createMailer(config.smtp) });
+const app = createApp(ctx);
+
+if (config.isDev) {
+  const { createServer } = await import('vite');
+  const vite = await createServer({ root: ROOT, server: { middlewareMode: true }, appType: 'spa' });
+  app.use(vite.middlewares);
+} else {
+  const dist = path.join(ROOT, 'dist');
+  const indexHtml = path.join(dist, 'index.html');
+  if (existsSync(indexHtml)) {
+    app.use('/assets', express.static(path.join(dist, 'assets'), { maxAge: '1y', immutable: true, fallthrough: false }));
+    app.use(express.static(dist, { index: false, maxAge: '1h' }));
+    app.get('/{*path}', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(indexHtml);
+    });
+  } else {
+    app.get('/{*path}', (_req, res) => {
+      res.status(503).type('text/plain').send('The web app has not been built yet. Run "npm run build" once, then "npm start".');
+    });
+  }
+}
+
+const url = `http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}`;
+const openOnStart = process.argv.includes('--open');
+
+/** Opens the app in the default browser (used by the Windows launcher). */
+function openBrowser() {
+  const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+  spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true })
+    .on('error', () => console.log(`  Open ${url} in your browser.`))
+    .unref();
+}
+
+// Express 5 also calls this on a listen error; the 'error' handler below deals with that case.
+const server = app.listen(config.port, config.host, (err?: Error) => {
+  if (err) return;
+  console.log('');
+  console.log('  YuvrajFX Agency OS');
+  console.log(`  âžœ ${url}${config.isDev ? '  (development, hot reload)' : ''}`);
+  console.log(`  âžœ database: ${config.dbPath}${applied.length ? `  (migrations applied: ${applied.join(', ')})` : ''}`);
+  console.log(`  âžœ email: ${ctx.mailer.description}`);
+  console.log('');
+  if (openOnStart) openBrowser();
+});
+
+server.on('error', async (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    // Started twice from the launcher: just bring up the copy that is already running.
+    const running = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok, () => false);
+    stopScheduler();
+    db.close();
+    if (running) {
+      console.log(`YuvrajFX Agency OS is already running at ${url}${openOnStart ? '. Opening it in your browser.' : '.'}`);
+      if (openOnStart) openBrowser();
+      process.exit(openOnStart ? 0 : 1);
+    }
+    console.error(`Port ${config.port} is already in use by another program. Set PORT in .env to a different number.`);
+    process.exit(1);
+  }
+  throw err;
+});
+
+const stopScheduler = startScheduler(ctx);
+
+function shutdown() {
+  stopScheduler();
+  server.close(() => {
+    db.close();
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+========== src/server/context.ts ==========
+import type { Db } from './db/db.ts';
+import type { Config } from './config.ts';
+import type { Mailer } from './services/mailer.ts';
+import { readSettings, type Settings } from './lib/settings.ts';
+import { todayIn } from '../shared/dates.ts';
+
+export type Clock = { now(): Date };
+
+export type AppContext = {
+  db: Db;
+  config: Config;
+  clock: Clock;
+  mailer: Mailer;
+  nowIso(): string;
+  /** Today's date in the business timezone (Settings â†’ timezone). */
+  today(): string;
+  settings(): Settings;
+  invalidateSettings(): void;
+};
+
+export function createContext(opts: { db: Db; config: Config; mailer: Mailer; clock?: Clock }): AppContext {
+  const clock = opts.clock ?? { now: () => new Date() };
+  let cached: Settings | null = null;
+  const ctx: AppContext = {
+    db: opts.db,
+    config: opts.config,
+    clock,
+    mailer: opts.mailer,
+    nowIso: () => clock.now().toISOString(),
+    today: () => todayIn(ctx.settings().timezone, clock.now()),
+    settings: () => (cached ??= readSettings(opts.db)),
+    invalidateSettings: () => {
+      cached = null;
+    },
+  };
+  return ctx;
+}
+
+========== src/server/db/db.ts ==========
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
+
+export type Row = Record<string, unknown>;
+export type Params = Record<string, unknown> | readonly unknown[] | undefined;
+type Bindable = null | number | bigint | string | Uint8Array;
+type Prepared = { stmt: StatementSync; names: string[] };
+
+const NAME_RE = /[:@$]([A-Za-z_][A-Za-z0-9_]*)/g;
+const IDENT_RE = /^[a-z_][a-z0-9_]*$/;
+
+/** Named parameters used by a statement, ignoring anything inside string literals or comments. */
+function paramNames(sql: string): string[] {
+  const stripped = sql.replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, '');
+  const names = new Set<string>();
+  for (const m of stripped.matchAll(NAME_RE)) names.add(m[1]);
+  return [...names];
+}
+
+function bindValue(v: unknown): Bindable {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  if (typeof v === 'number' || typeof v === 'string' || typeof v === 'bigint') return v;
+  if (v instanceof Uint8Array) return v;
+  if (v instanceof Date) return v.toISOString();
+  return JSON.stringify(v);
+}
+
+/**
+ * Thin synchronous wrapper over node:sqlite.
+ * - named params (:name) bind from an object; unknown keys are ignored, undefined becomes NULL
+ * - booleans become 0/1, arrays/objects are stored as JSON text
+ * - tx() nests with savepoints, so services can compose
+ */
+export class Db {
+  readonly raw: DatabaseSync;
+  #cache = new Map<string, Prepared>();
+  #depth = 0;
+
+  constructor(file: string) {
+    this.raw = new DatabaseSync(file);
+    this.raw.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    if (file !== ':memory:') this.raw.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+  }
+
+  #prepare(sql: string): Prepared {
+    let p = this.#cache.get(sql);
+    if (!p) {
+      p = { stmt: this.raw.prepare(sql), names: paramNames(sql) };
+      if (this.#cache.size > 500) this.#cache.clear();
+      this.#cache.set(sql, p);
+    }
+    return p;
+  }
+
+  #bind(p: Prepared, params: Params): Bindable[] | [Record<string, Bindable>] {
+    if (params === undefined) {
+      // SQLite would silently bind a forgotten :param as NULL; fail loudly instead.
+      if (p.names.length) throw new Error(`Missing SQL parameter(s): ${p.names.join(', ')}`);
+      return [];
+    }
+    if (Array.isArray(params)) return params.map(bindValue);
+    const src = params as Record<string, unknown>;
+    const obj: Record<string, Bindable> = {};
+    for (const n of p.names) {
+      if (!(n in src)) throw new Error(`Missing SQL parameter: ${n}`);
+      obj[n] = bindValue(src[n]);
+    }
+    return [obj];
+  }
+
+  all<T = Row>(sql: string, params?: Params): T[] {
+    const p = this.#prepare(sql);
+    return p.stmt.all(...(this.#bind(p, params) as [])) as T[];
+  }
+
+  get<T = Row>(sql: string, params?: Params): T | undefined {
+    const p = this.#prepare(sql);
+    return p.stmt.get(...(this.#bind(p, params) as [])) as T | undefined;
+  }
+
+  /** First column of the first row. */
+  value<T = unknown>(sql: string, params?: Params): T | undefined {
+    const row = this.get<Row>(sql, params);
+    if (!row) return undefined;
+    const k = Object.keys(row)[0];
+    return row[k] as T;
+  }
+
+  run(sql: string, params?: Params): { changes: number; lastInsertRowid: number } {
+    const p = this.#prepare(sql);
+    const r = p.stmt.run(...(this.#bind(p, params) as []));
+    return { changes: Number(r.changes), lastInsertRowid: Number(r.lastInsertRowid) };
+  }
+
+  exec(sql: string): void {
+    this.raw.exec(sql);
+  }
+
+  /** INSERT a row from an object whose keys are column names; returns the new id. */
+  insert(table: string, data: Record<string, unknown>): number {
+    const cols = Object.keys(data).filter((k) => data[k] !== undefined);
+    for (const c of [table, ...cols]) if (!IDENT_RE.test(c)) throw new Error(`Bad identifier: ${c}`);
+    const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((c) => ':' + c).join(', ')})`;
+    return this.run(sql, data).lastInsertRowid;
+  }
+
+  /** UPDATE the given columns of one row by id; returns the number of changed rows. */
+  update(table: string, id: number, data: Record<string, unknown>): number {
+    const cols = Object.keys(data).filter((k) => data[k] !== undefined && k !== 'id');
+    if (cols.length === 0) return 0;
+    for (const c of [table, ...cols]) if (!IDENT_RE.test(c)) throw new Error(`Bad identifier: ${c}`);
+    const sql = `UPDATE ${table} SET ${cols.map((c) => `${c} = :${c}`).join(', ')} WHERE id = :row_id`;
+    return this.run(sql, { ...data, row_id: id }).changes;
+  }
+
+  tx<T>(fn: () => T): T {
+    const sp = `sp_${this.#depth}`;
+    this.raw.exec(this.#depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${sp}`);
+    this.#depth++;
+    try {
+      const out = fn();
+      if (out instanceof Promise) throw new Error('Db.tx callbacks must be synchronous');
+      this.#depth--;
+      this.raw.exec(this.#depth === 0 ? 'COMMIT' : `RELEASE ${sp}`);
+      return out;
+    } catch (err) {
+      this.#depth--;
+      if (this.#depth === 0) this.raw.exec('ROLLBACK');
+      else this.raw.exec(`ROLLBACK TO ${sp}; RELEASE ${sp};`);
+      throw err;
+    }
+  }
+
+  close(): void {
+    this.#cache.clear();
+    this.raw.close();
+  }
+}
+
+/** Parse a JSON text column, falling back when it is empty or malformed. */
+export function json<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string' || value === '') return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+========== src/server/db/postgres.ts ==========
+
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { Pool, type PoolClient, type QueryResult } from 'pg';
+
+export type Row = Record<string, unknown>;
+export type Params = Record<string, unknown> | readonly unknown[] | undefined;
+
+type QueryContext = { client: PoolClient };
+
+const IDENT_RE = /^[a-z_][a-z0-9_]*$/;
+
+
+function bindValue(value: unknown): unknown {
+  if (value === undefined || value === null) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'object' && !(value instanceof Uint8Array)) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+
+/**
+ * Converts named SQLite-style parameters (:name, @name, $name)
+ * into PostgreSQL positional parameters ($1, $2, ...).
+ *
+ * Quoted strings, identifiers, comments and PostgreSQL dollar-quoted
+ * strings are skipped to avoid replacing text that is not a parameter.
+ */
+export function compileSql(
+  sql: string,
+  params?: Params,
+): { sql: string; values: unknown[] } {
+  if (params === undefined) {
+    if (/(?<!:):[a-z_][a-z0-9_]*/i.test(sql)) {
+      throw new Error('SQL parameters are missing.');
+    }
+    return { sql, values: [] };
+  }
+
+  if (Array.isArray(params)) {
+
+        // Preserve native PostgreSQL placeholders used by insert() and update().
+    // These SQL statements already contain $1, $2, etc.
+    if (/\$\d+/.test(sql)) {
+      const placeholders = [...sql.matchAll(/\$(\d+)/g)]
+        .map((match) => Number(match[1]));
+
+      const maxPlaceholder = Math.max(0, ...placeholders);
+
+      if (maxPlaceholder !== params.length) {
+        throw new Error(
+          `SQL parameter count mismatch: expected ${maxPlaceholder}, received ${params.length}.`,
+        );
+      }
+
+      return {
+        sql,
+        values: params.map(bindValue),
+      };
+    }
+
+    let index = 0;
+    let output = '';
+    let state:
+      | 'normal'
+      | 'single'
+      | 'double'
+      | 'line-comment'
+      | 'block-comment' = 'normal';
+
+    for (let i = 0; i < sql.length; i++) {
+      const ch = sql[i];
+      const next = sql[i + 1];
+
+      if (state === 'single') {
+        output += ch;
+        if (ch === "'" && next === "'") output += sql[++i];
+        else if (ch === "'") state = 'normal';
+        continue;
+      }
+
+      if (state === 'double') {
+        output += ch;
+        if (ch === '"' && next === '"') output += sql[++i];
+        else if (ch === '"') state = 'normal';
+        continue;
+      }
+
+      if (state === 'line-comment') {
+        output += ch;
+        if (ch === '\n') state = 'normal';
+        continue;
+      }
+
+      if (state === 'block-comment') {
+        output += ch;
+        if (ch === '*' && next === '/') {
+          output += sql[++i];
+          state = 'normal';
+        }
+        continue;
+      }
+
+      if (ch === "'") {
+        state = 'single';
+        output += ch;
+      } else if (ch === '"') {
+        state = 'double';
+        output += ch;
+      } else if (ch === '-' && next === '-') {
+        state = 'line-comment';
+        output += ch + sql[++i];
+      } else if (ch === '/' && next === '*') {
+        state = 'block-comment';
+        output += ch + sql[++i];
+      } else if (ch === '?') {
+        output += `$${++index}`;
+      } else {
+        output += ch;
+      }
+    }
+
+    if (index !== params.length) {
+      throw new Error(
+        `SQL parameter count mismatch: expected ${index}, received ${params.length}.`,
+      );
+    }
+
+    return { sql: output, values: params.map(bindValue) };
+  }
+
+  
+
+  const source = params as Record<string, unknown>;
+  const names: string[] = [];
+  const values: unknown[] = [];
+  const indexes = new Map<string, number>();
+
+  let output = '';
+  let state:
+    | 'normal'
+    | 'single'
+    | 'double'
+    | 'line-comment'
+    | 'block-comment' = 'normal';
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+
+    if (state === 'single') {
+      output += ch;
+      if (ch === "'" && next === "'") output += sql[++i];
+      else if (ch === "'") state = 'normal';
+      continue;
+    }
+
+    if (state === 'double') {
+      output += ch;
+      if (ch === '"' && next === '"') output += sql[++i];
+      else if (ch === '"') state = 'normal';
+      continue;
+    }
+
+    if (state === 'line-comment') {
+      output += ch;
+      if (ch === '\n') state = 'normal';
+      continue;
+    }
+
+    if (state === 'block-comment') {
+      output += ch;
+      if (ch === '*' && next === '/') {
+        output += sql[++i];
+        state = 'normal';
+      }
+      continue;
+    }
+
+    if (ch === "'") {
+      state = 'single';
+      output += ch;
+      continue;
+    }
+
+    if (ch === '"') {
+      state = 'double';
+      output += ch;
+      continue;
+    }
+
+    if (ch === '-' && next === '-') {
+      state = 'line-comment';
+      output += ch + sql[++i];
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      state = 'block-comment';
+      output += ch + sql[++i];
+      continue;
+    }
+
+    if (
+      (ch === ':' || ch === '@' || ch === '$') &&
+      next &&
+      /[a-z_]/i.test(next) &&
+      !(ch === ':' && sql[i - 1] === ':')
+    ) {
+      let end = i + 2;
+      while (end < sql.length && /[a-z0-9_]/i.test(sql[end])) end++;
+
+      const name = sql.slice(i + 1, end);
+
+      if (!(name in source)) {
+        throw new Error(`Missing SQL parameter: ${name}`);
+      }
+
+      let index = indexes.get(name);
+
+      if (index === undefined) {
+        index = values.length + 1;
+        indexes.set(name, index);
+        names.push(name);
+        values.push(bindValue(source[name]));
+      }
+
+      output += `$${index}`;
+      i = end - 1;
+      continue;
+    }
+
+    output += ch;
+  }
+
+  return { sql: output, values };
+}
+
+/** Async PostgreSQL adapter. Not yet wired into the application's routes. */
+export class PostgresDb {
+  readonly pool: Pool;
+  #context = new AsyncLocalStorage<QueryContext>();
+  #closed = false;
+
+  constructor(connectionString: string) {
+    if (!connectionString?.trim()) {
+      throw new Error('DATABASE_URL is required for PostgreSQL.');
+    }
+
+    this.pool = new Pool({
+      connectionString,
+      max: Number(process.env.PG_POOL_MAX ?? 10),
+      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 30_000,
+      application_name: 'yuvrajfx-agency-os',
+      ssl: process.env.PGSSL === 'true'
+        ? { rejectUnauthorized: true }
+        : undefined,
+    });
+
+    this.pool.on('error', (error) => {
+      console.error('Unexpected idle PostgreSQL client error:', error);
+    });
+  }
+
+  async #query(
+    sql: string,
+    params?: Params,
+  ): Promise<QueryResult<Row>> {
+    if (this.#closed) throw new Error('PostgreSQL database is closed.');
+
+    const compiled = compileSql(sql, params);
+    const client = this.#context.getStore()?.client;
+
+    if (client) {
+      return client.query(compiled.sql, compiled.values) as Promise<QueryResult<Row>>;
+    }
+
+    return this.pool.query(compiled.sql, compiled.values) as Promise<QueryResult<Row>>;
+  }
+
+  async all<T = Row>(sql: string, params?: Params): Promise<T[]> {
+    const result = await this.#query(sql, params);
+    return result.rows as T[];
+  }
+
+  async get<T = Row>(sql: string, params?: Params): Promise<T | undefined> {
+    const result = await this.#query(sql, params);
+    return result.rows[0] as T | undefined;
+  }
+
+  async value<T = unknown>(sql: string, params?: Params): Promise<T | undefined> {
+    const row = await this.get<Row>(sql, params);
+    if (!row) return undefined;
+    return row[Object.keys(row)[0]] as T;
+  }
+
+  async run(
+    sql: string,
+    params?: Params,
+  ): Promise<{ changes: number; lastInsertRowid: number }> {
+    const result = await this.#query(sql, params);
+    const id = result.rows[0]?.id;
+
+    return {
+      changes: result.rowCount ?? 0,
+      lastInsertRowid: id === undefined ? 0 : Number(id),
+    };
+  }
+
+  async exec(sql: string): Promise<void> {
+    if (this.#closed) throw new Error('PostgreSQL database is closed.');
+
+    const client = this.#context.getStore()?.client;
+
+    if (client) {
+      await client.query(sql);
+    } else {
+      await this.pool.query(sql);
+    }
+  }
+
+  async insert(table: string, data: Record<string, unknown>): Promise<number> {
+    const columns = Object.keys(data).filter((key) => data[key] !== undefined);
+
+    if (!IDENT_RE.test(table) || columns.length === 0) {
+      throw new Error('Invalid table name or empty insert data.');
+    }
+
+    for (const column of columns) {
+      if (!IDENT_RE.test(column)) throw new Error(`Bad column identifier: ${column}`);
+    }
+
+    const values = columns.map((column) => data[column]);
+    const placeholders = columns.map((_, index) => `$${index + 1}`);
+
+    const result = await this.#query(
+      `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`,
+      values,
+    );
+
+    const id = result.rows[0]?.id;
+
+    if (id === undefined) {
+      throw new Error(`INSERT into ${table} did not return an id.`);
+    }
+
+    return Number(id);
+  }
+
+  async update(
+    table: string,
+    id: number,
+    data: Record<string, unknown>,
+  ): Promise<number> {
+    if (!IDENT_RE.test(table)) throw new Error(`Bad table identifier: ${table}`);
+
+    const columns = Object.keys(data).filter(
+      (key) => data[key] !== undefined && key !== 'id',
+    );
+
+    if (columns.length === 0) return 0;
+
+    for (const column of columns) {
+      if (!IDENT_RE.test(column)) throw new Error(`Bad column identifier: ${column}`);
+    }
+
+    const values = columns.map((column) => bindValue(data[column]));
+    values.push(id);
+
+    const assignments = columns.map(
+      (column, index) => `${column} = $${index + 1}`,
+    );
+
+    const result = await this.#query(
+      `UPDATE ${table} SET ${assignments.join(', ')} WHERE id = $${values.length}`,
+      values,
+    );
+
+    return result.rowCount ?? 0;
+  }
+
+  async tx<T>(fn: () => Promise<T>): Promise<T> {
+    const parent = this.#context.getStore();
+
+    if (parent) {
+      const savepoint = `sp_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+      await parent.client.query(`SAVEPOINT ${savepoint}`);
+
+      try {
+        const result = await fn();
+        await parent.client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        return result;
+      } catch (error) {
+        await parent.client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        await parent.client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        throw error;
+      }
+    }
+
+    const client = await this.pool.connect();
+
+    try {
+      await client.query('BEGIN');
+      const result = await this.#context.run({ client }, fn);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Preserve the original transaction error.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    this.#closed = true;
+    await this.pool.end();
+  }
+}
+
+/** Parse a JSON text column, falling back when it is empty or malformed. */
+export function json<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string' || value === '') return fallback;
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+========== src/server/db/migrations.ts ==========
+import type { Db } from './db.ts';
+
+export type Migration = { version: number; name: string; sql: string };
+
+const NOW = `(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+
+// Append new migrations to the end; never edit one that has shipped.
+export const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    name: 'initial schema',
+    sql: `
+CREATE TABLE settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE team_members (
+  id              INTEGER PRIMARY KEY,
+  name            TEXT NOT NULL,
+  email           TEXT,
+  title           TEXT NOT NULL DEFAULT 'Editor',
+  skills          TEXT NOT NULL DEFAULT '[]',
+  capacity_hours  REAL NOT NULL DEFAULT 40 CHECK (capacity_hours >= 0),
+  cost_rate_minor INTEGER CHECK (cost_rate_minor IS NULL OR cost_rate_minor >= 0),
+  cost_currency   TEXT,
+  cost_unit       TEXT CHECK (cost_unit IS NULL OR cost_unit IN ('hour','video','project','month')),
+  status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+  color           TEXT,
+  notes           TEXT,
+  is_demo         INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL DEFAULT ${NOW},
+  updated_at      TEXT NOT NULL DEFAULT ${NOW}
+);
+
+CREATE TABLE clients (
+  id                 INTEGER PRIMARY KEY,
+  name               TEXT NOT NULL,
+  company            TEXT,
+  email              TEXT,
+  phone              TEXT,
+  whatsapp           TEXT,
+  other_contact      TEXT,
+  website            TEXT,
+  socials            TEXT NOT NULL DEFAULT '{}',
+  billing_address    TEXT,
+  tax_id             TEXT,
+  country            TEXT,
+  timezone           TEXT,
+  service_package    TEXT,
+  retainer_minor     INTEGER CHECK (retainer_minor IS NULL OR retainer_minor >= 0),
+  currency           TEXT NOT NULL DEFAULT 'USD',
+  billing_cycle      TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly','quarterly','yearly')),
+  billing_day        INTEGER CHECK (billing_day IS NULL OR billing_day BETWEEN 1 AND 28),
+  contract_start     TEXT,
+  renewal_date       TEXT,
+  payment_terms_days INTEGER NOT NULL DEFAULT 7 CHECK (payment_terms_days BETWEEN 0 AND 365),
+  payment_terms_note TEXT,
+  status             TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('onboarding','active','paused','completed','churned')),
+  tags               TEXT NOT NULL DEFAULT '[]',
+  notes              TEXT,
+  is_demo            INTEGER NOT NULL DEFAULT 0,
+  archived_at        TEXT,
+  created_at         TEXT NOT NULL DEFAULT ${NOW},
+  updated_at         TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX clients_status ON clients(status);
+
+CREATE TABLE users (
+  id                   INTEGER PRIMARY KEY,
+  email                TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  name                 TEXT NOT NULL,
+  password_hash        TEXT NOT NULL,
+  role                 TEXT NOT NULL CHECK (role IN ('owner','admin','member','client')),
+  client_id            INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+  team_member_id       INTEGER REFERENCES team_members(id) ON DELETE SET NULL,
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  disabled             INTEGER NOT NULL DEFAULT 0,
+  last_login_at        TEXT,
+  created_at           TEXT NOT NULL DEFAULT ${NOW},
+  updated_at           TEXT NOT NULL DEFAULT ${NOW},
+  -- Portal users always belong to exactly one client; staff never do.
+  CHECK ((role = 'client' AND client_id IS NOT NULL) OR (role <> 'client' AND client_id IS NULL))
+);
+
+CREATE TABLE sessions (
+  id           TEXT PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at   TEXT NOT NULL,
+  expires_at   TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  user_agent   TEXT,
+  ip           TEXT
+);
+CREATE INDEX sessions_user ON sessions(user_id);
+
+CREATE TABLE leads (
+  id                    INTEGER PRIMARY KEY,
+  name                  TEXT NOT NULL,
+  company               TEXT,
+  email                 TEXT,
+  phone                 TEXT,
+  website               TEXT,
+  social_url            TEXT,
+  source                TEXT NOT NULL DEFAULT 'other',
+  deal_type             TEXT NOT NULL DEFAULT 'retainer' CHECK (deal_type IN ('retainer','one_time')),
+  estimated_value_minor INTEGER CHECK (estimated_value_minor IS NULL OR estimated_value_minor >= 0),
+  currency              TEXT NOT NULL DEFAULT 'USD',
+  stage                 TEXT NOT NULL DEFAULT 'lead'
+                        CHECK (stage IN ('lead','contacted','replied','discovery_call','proposal_sent','negotiation','won','lost')),
+  stage_changed_at      TEXT NOT NULL DEFAULT ${NOW},
+  last_contact_at       TEXT,
+  next_follow_up        TEXT,
+  notes                 TEXT,
+  outcome_reason        TEXT,
+  closed_at             TEXT,
+  client_id             INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  tags                  TEXT NOT NULL DEFAULT '[]',
+  is_demo               INTEGER NOT NULL DEFAULT 0,
+  created_at            TEXT NOT NULL DEFAULT ${NOW},
+  updated_at            TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX leads_stage ON leads(stage);
+CREATE INDEX leads_follow_up ON leads(next_follow_up);
+
+CREATE TABLE lead_stage_history (
+  id         INTEGER PRIMARY KEY,
+  lead_id    INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  from_stage TEXT,
+  to_stage   TEXT NOT NULL,
+  changed_at TEXT NOT NULL
+);
+CREATE INDEX lead_stage_history_lead ON lead_stage_history(lead_id);
+
+-- Communication log for clients and prospects (calls, emails, DMsâ€¦). Logging only: nothing is sent from here.
+CREATE TABLE communications (
+  id          INTEGER PRIMARY KEY,
+  client_id   INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+  lead_id     INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+  channel     TEXT NOT NULL CHECK (channel IN ('email','call','meeting','whatsapp','dm','note','other')),
+  direction   TEXT NOT NULL DEFAULT 'outbound' CHECK (direction IN ('outbound','inbound','internal')),
+  subject     TEXT,
+  body        TEXT,
+  occurred_at TEXT NOT NULL,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  is_demo     INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT ${NOW},
+  CHECK (client_id IS NOT NULL OR lead_id IS NOT NULL)
+);
+CREATE INDEX communications_client ON communications(client_id, occurred_at);
+CREATE INDEX communications_lead ON communications(lead_id, occurred_at);
+
+CREATE TABLE recurring_rules (
+  id                INTEGER PRIMARY KEY,
+  kind              TEXT NOT NULL CHECK (kind IN ('task','project')),
+  title             TEXT NOT NULL,
+  frequency         TEXT NOT NULL CHECK (frequency IN ('daily','weekly','monthly','quarterly','yearly')),
+  interval          INTEGER NOT NULL DEFAULT 1 CHECK (interval BETWEEN 1 AND 52),
+  weekday           INTEGER CHECK (weekday IS NULL OR weekday BETWEEN 0 AND 6),
+  month_day         INTEGER CHECK (month_day IS NULL OR month_day BETWEEN 1 AND 31),
+  start_date        TEXT NOT NULL,
+  end_date          TEXT,
+  next_occurrence   TEXT NOT NULL,
+  lead_days         INTEGER NOT NULL DEFAULT 0 CHECK (lead_days BETWEEN 0 AND 60),
+  template          TEXT NOT NULL DEFAULT '{}',
+  active            INTEGER NOT NULL DEFAULT 1,
+  last_generated_at TEXT,
+  is_demo           INTEGER NOT NULL DEFAULT 0,
+  created_at        TEXT NOT NULL DEFAULT ${NOW},
+  updated_at        TEXT NOT NULL DEFAULT ${NOW}
+);
+
+CREATE TABLE projects (
+  id                INTEGER PRIMARY KEY,
+  client_id         INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
+  name              TEXT NOT NULL,
+  description       TEXT,
+  type              TEXT NOT NULL CHECK (type IN ('short_form','long_form','ad','motion_graphics','thumbnail','other')),
+  billing_type      TEXT NOT NULL DEFAULT 'fixed' CHECK (billing_type IN ('fixed','retainer','hourly')),
+  price_minor       INTEGER CHECK (price_minor IS NULL OR price_minor >= 0),
+  currency          TEXT NOT NULL,
+  start_date        TEXT,
+  deadline          TEXT,
+  priority          TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+  status            TEXT NOT NULL DEFAULT 'backlog'
+                    CHECK (status IN ('backlog','editing','internal_review','client_review','revisions','approved','delivered','on_hold','cancelled')),
+  editor_id         INTEGER REFERENCES team_members(id) ON DELETE SET NULL,
+  reference_links   TEXT NOT NULL DEFAULT '[]',
+  asset_links       TEXT NOT NULL DEFAULT '[]',
+  portal_visible    INTEGER NOT NULL DEFAULT 1,
+  recurring_rule_id INTEGER REFERENCES recurring_rules(id) ON DELETE SET NULL,
+  recurrence_key    TEXT UNIQUE,
+  completed_at      TEXT,
+  is_demo           INTEGER NOT NULL DEFAULT 0,
+  archived_at       TEXT,
+  created_at        TEXT NOT NULL DEFAULT ${NOW},
+  updated_at        TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX projects_client ON projects(client_id);
+CREATE INDEX projects_status ON projects(status);
+
+CREATE TABLE deliverables (
+  id              INTEGER PRIMARY KEY,
+  project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title           TEXT NOT NULL,
+  format          TEXT,
+  platform        TEXT,
+  deadline        TEXT,
+  status          TEXT NOT NULL DEFAULT 'backlog'
+                  CHECK (status IN ('backlog','editing','internal_review','client_review','revisions','approved','delivered')),
+  assignee_id     INTEGER REFERENCES team_members(id) ON DELETE SET NULL,
+  source_url      TEXT,
+  review_url      TEXT,
+  final_url       TEXT,
+  revision_count  INTEGER NOT NULL DEFAULT 0 CHECK (revision_count >= 0),
+  estimated_hours REAL CHECK (estimated_hours IS NULL OR estimated_hours >= 0),
+  notes           TEXT,
+  sort_order      INTEGER NOT NULL DEFAULT 0,
+  approved_at     TEXT,
+  delivered_at    TEXT,
+  is_demo         INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL DEFAULT ${NOW},
+  updated_at      TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX deliverables_project ON deliverables(project_id);
+CREATE INDEX deliverables_status_deadline ON deliverables(status, deadline);
+
+-- Feedback and revision history. internal_note rows and visible_to_client = 0 never reach the portal.
+CREATE TABLE feedback (
+  id                INTEGER PRIMARY KEY,
+  project_id        INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  deliverable_id    INTEGER REFERENCES deliverables(id) ON DELETE CASCADE,
+  kind              TEXT NOT NULL CHECK (kind IN ('comment','revision_request','approval','internal_note')),
+  author_type       TEXT NOT NULL CHECK (author_type IN ('team','client')),
+  author_user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  author_name       TEXT NOT NULL,
+  body              TEXT NOT NULL,
+  timecode          TEXT,
+  revision_number   INTEGER,
+  visible_to_client INTEGER NOT NULL DEFAULT 1,
+  resolved_at       TEXT,
+  is_demo           INTEGER NOT NULL DEFAULT 0,
+  created_at        TEXT NOT NULL DEFAULT ${NOW},
+  CHECK (kind <> 'internal_note' OR visible_to_client = 0)
+);
+CREATE INDEX feedback_project ON feedback(project_id, created_at);
+CREATE INDEX feedback_deliverable ON feedback(deliverable_id, created_at);
+
+CREATE TABLE invoices (
+  id                   INTEGER PRIMARY KEY,
+  number               TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  client_id            INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
+  project_id           INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  kind                 TEXT NOT NULL DEFAULT 'standard' CHECK (kind IN ('standard','retainer')),
+  currency             TEXT NOT NULL,
+  issue_date           TEXT NOT NULL,
+  due_date             TEXT NOT NULL,
+  period_start         TEXT,
+  period_end           TEXT,
+  state                TEXT NOT NULL DEFAULT 'draft' CHECK (state IN ('draft','sent','void')),
+  discount_type        TEXT NOT NULL DEFAULT 'none' CHECK (discount_type IN ('none','percent','fixed')),
+  discount_percent     REAL NOT NULL DEFAULT 0 CHECK (discount_percent BETWEEN 0 AND 100),
+  discount_fixed_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_fixed_minor >= 0),
+  taxes                TEXT NOT NULL DEFAULT '[]',
+  subtotal_minor       INTEGER NOT NULL DEFAULT 0,
+  discount_minor       INTEGER NOT NULL DEFAULT 0,
+  tax_minor            INTEGER NOT NULL DEFAULT 0,
+  total_minor          INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+  notes                TEXT,
+  terms                TEXT,
+  internal_notes       TEXT,
+  sent_at              TEXT,
+  voided_at            TEXT,
+  void_reason          TEXT,
+  portal_visible       INTEGER NOT NULL DEFAULT 1,
+  is_demo              INTEGER NOT NULL DEFAULT 0,
+  created_at           TEXT NOT NULL DEFAULT ${NOW},
+  updated_at           TEXT NOT NULL DEFAULT ${NOW},
+  CHECK (due_date >= issue_date)
+);
+CREATE INDEX invoices_client ON invoices(client_id);
+CREATE INDEX invoices_issue ON invoices(issue_date);
+-- One live retainer invoice per client per service period.
+CREATE UNIQUE INDEX invoices_retainer_period ON invoices(client_id, period_start) WHERE kind = 'retainer' AND state <> 'void';
+
+CREATE TABLE invoice_items (
+  id               INTEGER PRIMARY KEY,
+  invoice_id       INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  description      TEXT NOT NULL,
+  quantity         REAL NOT NULL CHECK (quantity > 0),
+  unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),
+  amount_minor     INTEGER NOT NULL CHECK (amount_minor >= 0),
+  service_type     TEXT NOT NULL DEFAULT 'other',
+  sort_order       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX invoice_items_invoice ON invoice_items(invoice_id);
+
+CREATE TABLE payments (
+  id           INTEGER PRIMARY KEY,
+  invoice_id   INTEGER NOT NULL REFERENCES invoices(id) ON DELETE RESTRICT,
+  client_id    INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency     TEXT NOT NULL,
+  paid_at      TEXT NOT NULL,
+  method       TEXT NOT NULL DEFAULT 'bank_transfer',
+  reference    TEXT,
+  notes        TEXT,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  is_demo      INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX payments_invoice ON payments(invoice_id);
+CREATE INDEX payments_paid_at ON payments(paid_at);
+
+-- Database-level guarantees behind "never mark an invoice paid unless payments cover it":
+-- payments can't exceed the balance, can't change currency, and a total can't drop below what was paid.
+CREATE TRIGGER payments_guard BEFORE INSERT ON payments
+BEGIN
+  SELECT RAISE(ABORT, 'PAYMENT_INVOICE_VOID')
+    WHERE (SELECT state FROM invoices WHERE id = NEW.invoice_id) = 'void';
+  SELECT RAISE(ABORT, 'PAYMENT_CURRENCY_MISMATCH')
+    WHERE NEW.currency <> (SELECT currency FROM invoices WHERE id = NEW.invoice_id);
+  SELECT RAISE(ABORT, 'PAYMENT_CLIENT_MISMATCH')
+    WHERE NEW.client_id <> (SELECT client_id FROM invoices WHERE id = NEW.invoice_id);
+  SELECT RAISE(ABORT, 'PAYMENT_EXCEEDS_BALANCE')
+    WHERE NEW.amount_minor > (SELECT total_minor FROM invoices WHERE id = NEW.invoice_id)
+                           - (SELECT COALESCE(SUM(amount_minor), 0) FROM payments WHERE invoice_id = NEW.invoice_id);
+END;
+
+CREATE TRIGGER payments_immutable BEFORE UPDATE OF invoice_id, client_id, amount_minor, currency ON payments
+BEGIN
+  SELECT RAISE(ABORT, 'PAYMENT_IMMUTABLE');
+END;
+
+CREATE TRIGGER invoices_total_covers_payments BEFORE UPDATE OF total_minor ON invoices
+BEGIN
+  SELECT RAISE(ABORT, 'INVOICE_TOTAL_BELOW_PAID')
+    WHERE NEW.total_minor < (SELECT COALESCE(SUM(amount_minor), 0) FROM payments WHERE invoice_id = NEW.id);
+END;
+
+CREATE TRIGGER invoices_locked_when_paid BEFORE UPDATE OF currency, client_id, state ON invoices
+WHEN EXISTS (SELECT 1 FROM payments WHERE invoice_id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'INVOICE_HAS_PAYMENTS')
+    WHERE NEW.currency <> OLD.currency OR NEW.client_id <> OLD.client_id OR NEW.state <> 'sent';
+END;
+
+CREATE VIEW invoice_balances AS
+SELECT i.*,
+       COALESCE(p.paid_minor, 0)                 AS paid_minor,
+       i.total_minor - COALESCE(p.paid_minor, 0) AS balance_minor,
+       COALESCE(p.payment_count, 0)              AS payment_count,
+       p.last_paid_at                            AS last_paid_at
+FROM invoices i
+LEFT JOIN (
+  SELECT invoice_id, SUM(amount_minor) AS paid_minor, COUNT(*) AS payment_count, MAX(paid_at) AS last_paid_at
+  FROM payments GROUP BY invoice_id
+) p ON p.invoice_id = i.id;
+
+CREATE TABLE expenses (
+  id             INTEGER PRIMARY KEY,
+  date           TEXT NOT NULL,
+  category       TEXT NOT NULL,
+  amount_minor   INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency       TEXT NOT NULL,
+  description    TEXT NOT NULL,
+  vendor         TEXT,
+  client_id      INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  team_member_id INTEGER REFERENCES team_members(id) ON DELETE SET NULL,
+  receipt_url    TEXT,
+  notes          TEXT,
+  is_demo        INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL DEFAULT ${NOW},
+  updated_at     TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX expenses_date ON expenses(date);
+
+CREATE TABLE tasks (
+  id                INTEGER PRIMARY KEY,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  client_id         INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  project_id        INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  lead_id           INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+  priority          TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+  assignee_id       INTEGER REFERENCES team_members(id) ON DELETE SET NULL,
+  due_date          TEXT,
+  status            TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','in_progress','done','cancelled')),
+  completed_at      TEXT,
+  recurring_rule_id INTEGER REFERENCES recurring_rules(id) ON DELETE SET NULL,
+  recurrence_key    TEXT UNIQUE,
+  source            TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','recurring','automation')),
+  is_demo           INTEGER NOT NULL DEFAULT 0,
+  created_at        TEXT NOT NULL DEFAULT ${NOW},
+  updated_at        TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX tasks_status_due ON tasks(status, due_date);
+
+-- Append-only business activity log (no foreign keys, so history survives deletions).
+CREATE TABLE activity (
+  id          INTEGER PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id   INTEGER,
+  client_id   INTEGER,
+  project_id  INTEGER,
+  action      TEXT NOT NULL,
+  summary     TEXT NOT NULL,
+  meta        TEXT NOT NULL DEFAULT '{}',
+  actor_type  TEXT NOT NULL DEFAULT 'user' CHECK (actor_type IN ('user','client','system')),
+  actor_id    INTEGER,
+  actor_name  TEXT,
+  is_demo     INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX activity_created ON activity(created_at);
+CREATE INDEX activity_client ON activity(client_id, created_at);
+CREATE INDEX activity_entity ON activity(entity_type, entity_id);
+
+CREATE TABLE notifications (
+  id          INTEGER PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  audience    TEXT NOT NULL DEFAULT 'admin' CHECK (audience IN ('admin','staff')),
+  severity    TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info','success','warning','critical')),
+  title       TEXT NOT NULL,
+  body        TEXT,
+  link        TEXT,
+  entity_type TEXT,
+  entity_id   INTEGER,
+  dedupe_key  TEXT UNIQUE,
+  is_demo     INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX notifications_created ON notifications(created_at);
+
+CREATE TABLE notification_reads (
+  notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_at         TEXT NOT NULL,
+  PRIMARY KEY (notification_id, user_id)
+);
+
+CREATE TABLE automation_settings (
+  key         TEXT PRIMARY KEY,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  config      TEXT NOT NULL DEFAULT '{}',
+  last_run_at TEXT,
+  last_result TEXT
+);
+
+CREATE TABLE automation_runs (
+  id          INTEGER PRIMARY KEY,
+  trigger     TEXT NOT NULL CHECK (trigger IN ('startup','schedule','manual')),
+  started_at  TEXT NOT NULL,
+  finished_at TEXT,
+  status      TEXT NOT NULL CHECK (status IN ('running','ok','error')),
+  summary     TEXT NOT NULL DEFAULT '{}',
+  error       TEXT
+);
+
+-- Messages drafted by automations. They are only ever sent after a person approves them.
+CREATE TABLE outbox (
+  id             INTEGER PRIMARY KEY,
+  automation_key TEXT,
+  channel        TEXT NOT NULL DEFAULT 'email' CHECK (channel IN ('email')),
+  to_address     TEXT NOT NULL,
+  to_name        TEXT,
+  subject        TEXT NOT NULL,
+  body           TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'pending_approval'
+                 CHECK (status IN ('pending_approval','sent','sent_manually','failed','rejected')),
+  entity_type    TEXT,
+  entity_id      INTEGER,
+  client_id      INTEGER,
+  dedupe_key     TEXT UNIQUE,
+  error          TEXT,
+  approved_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  approved_at    TEXT,
+  sent_at        TEXT,
+  is_demo        INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL DEFAULT ${NOW},
+  updated_at     TEXT NOT NULL DEFAULT ${NOW}
+);
+CREATE INDEX outbox_status ON outbox(status);
+
+CREATE TABLE report_snapshots (
+  id           INTEGER PRIMARY KEY,
+  kind         TEXT NOT NULL CHECK (kind IN ('weekly','monthly')),
+  period_start TEXT NOT NULL,
+  period_end   TEXT NOT NULL,
+  data         TEXT NOT NULL,
+  is_demo      INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT ${NOW},
+  UNIQUE (kind, period_start)
+);
+`,
+  },
+];
+
+export function migrate(db: Db, now: () => string = () => new Date().toISOString()): number[] {
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+  )`);
+  const applied = new Set(db.all<{ version: number }>('SELECT version FROM schema_migrations').map((r) => r.version));
+  const ran: number[] = [];
+  for (const m of MIGRATIONS) {
+    if (applied.has(m.version)) continue;
+    db.tx(() => {
+      db.exec(m.sql);
+      db.run('INSERT INTO schema_migrations (version, name, applied_at) VALUES (:version, :name, :at)', {
+        version: m.version,
+        name: m.name,
+        at: now(),
+      });
+    });
+    ran.push(m.version);
+  }
+  return ran;
+}
+
+========== package.json ==========
+{
+  "name": "yuvrajfx-agency-os",
+  "version": "1.0.0",
+  "private": true,
+  "description": "YuvrajFX Agency OS: clients, projects, deliverables, invoices, finance, pipeline, tasks and a client portal for a video-editing agency.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --watch-path=src/server --watch-path=src/shared --watch-preserve-output src/server/index.ts --dev",
+    "build": "node scripts/build.ts",
+    "start": "node --disable-warning=ExperimentalWarning src/server/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json --singleThreaded",
+    "migrate": "node --disable-warning=ExperimentalWarning scripts/migrate.ts",
+    "seed:demo": "node --disable-warning=ExperimentalWarning scripts/demo.ts load",
+    "demo:remove": "node --disable-warning=ExperimentalWarning scripts/demo.ts remove",
+    "user:create": "node --disable-warning=ExperimentalWarning scripts/create-user.ts",
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
+    "@tanstack/react-query": "5.105.0",
+    "clsx": "2.1.1",
+    "express": "5.3.0",
+    "helmet": "8.3.0",
+    "lucide-react": "1.62.0",
+    "nodemailer": "10.2.1",
+    "pg": "^8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router": "8.5.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.5",
+    "@types/nodemailer": "8.0.2",
+    "@types/pg": "^8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/supertest": "7.2.1",
+    "@vitejs/plugin-react": "6.1.2",
+    "supertest": "7.3.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}
