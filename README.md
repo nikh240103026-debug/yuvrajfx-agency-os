@@ -1,8 +1,8 @@
 # YuvrajFX Agency OS
 
-The operating system for YuvrajFX, a video editing and motion design agency. It covers clients, projects and deliverables, invoices and payments, money reports, the sales pipeline, tasks, a client portal and approval-gated automations. Everything sits in one app that runs on this computer, with your data in a single local database file.
+The operating system for YuvrajFX, a video editing and motion design agency. It covers clients, projects and deliverables, invoices and payments, money reports, the sales pipeline, tasks, a client portal and approval-gated automations. The React frontend and Express API run as one application, with persistent data stored in PostgreSQL.
 
-- **Your data stays on this computer.** The app is a Node.js server plus a SQLite file. There is no cloud service, no tracking and no outside API calls.
+- **PostgreSQL is the only runtime database.** Use a managed PostgreSQL service for production or a local PostgreSQL server for development.
 - **Nothing goes out without you.** No email is sent and no client is contacted automatically. Reminders become drafts that wait for your approval.
 - **Figures come from your records.** Every number on the dashboard and in reports is calculated from your own data. Nothing is hardcoded.
 
@@ -10,7 +10,7 @@ The operating system for YuvrajFX, a video editing and motion design agency. It 
 
 ## 1. Start it
 
-Requirements: **Node.js 24 or newer** (this PC has 24.21). Nothing else is needed: the database engine is built into Node.
+Requirements: **Node.js 24 or newer** and a PostgreSQL database. Set `DATABASE_URL` before starting the app.
 
 **Easiest (Windows):** double-click **`Launch YuvrajFX.cmd`** in this folder.
 - On first run it installs dependencies and builds the app.
@@ -54,17 +54,17 @@ Go to **Settings → Data → Load demo data**, or run `npm run seed:demo` after
 
 ## 2. Configuration
 
-All settings are optional. To change any, copy `.env.example` to `.env` and edit it. Secrets live only in `.env`, which is git-ignored; none are hardcoded.
+Copy `.env.example` to `.env`. `DATABASE_URL` is required; other settings are optional. Secrets live only in `.env`, which is git-ignored; none are hardcoded.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `HOST` | `127.0.0.1` | Address the server listens on. The default keeps the app reachable from this computer only. |
 | `PORT` | `4747` | Port for the web app. |
-| `DB_PATH` | `data/agency.db` | SQLite database file. It is created on first start; relative paths are resolved from this folder. |
+| `DATABASE_URL` | required | PostgreSQL connection string, for example `postgresql://user:password@host:5432/yuvrajfx?sslmode=require`. |
 | `COOKIE_SECURE` | `false` | Set to `true` only when the app is served over HTTPS, so session cookies get the Secure flag. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | empty | Outgoing email, used only when you approve a message. With `SMTP_HOST` empty, email is off and drafts wait in the Outbox. |
 
-Command-line overrides: `npm start -- --port=5000 --db=D:/somewhere/agency.db`.
+Command-line port override: `npm start -- --port=5000`. Configure database access with `DATABASE_URL`.
 
 Business settings are stored in the database and edited in the app, under **Settings**:
 - business details, address and tax ID label;
@@ -76,38 +76,15 @@ Business settings are stored in the database and edited in the app, under **Sett
 
 ## 3. Database
 
-- **Engine:** SQLite through Node's built-in `node:sqlite`, in one file at `DB_PATH` (default `data/agency.db`).
-  - WAL mode is on, so `agency.db-wal` and `agency.db-shm` sit next to it while the app runs. Don't delete them.
-  - Foreign keys are enforced.
-- **Migrations:** schema migrations run automatically at start-up. `npm run migrate` runs them without starting the server.
-- **Money:** stored as integer minor units (paise, cents) together with an ISO currency code on every record. There are no floating-point amounts anywhere.
-- **Integrity rules inside the database:** triggers enforce these even if a bug slipped through the app:
-  - a payment can't exceed the invoice balance;
-  - a payment must match the invoice's currency and client;
-  - recorded payments can't be edited, only deleted and re-entered;
-  - an invoice total can't drop below what's already been paid;
-  - a paid invoice's currency and client are locked.
-- **Backups:**
+- **Engine:** PostgreSQL only. The application requires `DATABASE_URL` and does not create or fall back to a local database file.
+- **Migrations:** the PostgreSQL schema is applied at startup. Run `npm run migrate` to apply migrations without starting the web server.
+- **Money:** stored as integer minor units (paise, cents) together with an ISO currency code on every record.
+- **Integrity rules:** PostgreSQL constraints and triggers enforce payment/invoice rules, including preventing overpayments, currency/client mismatches, editing recorded payments, reducing invoice totals below payments, and changing paid invoice ownership/currency.
+- **Backups:** configure automated backups in your PostgreSQL provider. `npm run backup` and Settings → Data → Download backup use `pg_dump`; the PostgreSQL client utility must be installed on the host.
+- **Restoring:** restore a custom-format `.dump` with PostgreSQL's `pg_restore` into a database with the intended schema/version. Never restore over production without a verified backup and a maintenance window.
+- **Locked out?** Run `npm run user:create -- --email you@example.com --reset` to generate a one-time password. Change it at next sign-in.
 
-  ```bash
-  npm run backup
-  ```
-
-  This writes a consistent copy to `data/backups/agency-<timestamp>.db` and is safe to run while the app is running.
-- **Restoring a backup:**
-  1. Stop the app.
-  2. Move `agency.db`, `agency.db-wal` and `agency.db-shm` out of `data/`.
-  3. Copy the backup in as `data/agency.db`.
-  4. Start the app again.
-- **Locked out?** Reset a password from the terminal:
-
-  ```bash
-  npm run user:create -- --email you@example.com --reset
-  ```
-
-  This prints a one-time password, which you must change at your next sign-in. The same script also creates extra admin or member accounts: `--email … --name "…" --role admin|member`.
-
-The `data/` folder is git-ignored. Back it up (for example, copy `data/backups` to another drive or to cloud storage).
+Example local setup: create a PostgreSQL database named `yuvrajfx`, copy `.env.example` to `.env`, set `DATABASE_URL`, then run `npm install`, `npm run build`, and `npm start`.
 
 ---
 
@@ -263,7 +240,7 @@ Each automation can be switched on or off and run on demand. Every email lands i
 npm test
 ```
 
-This runs **62 automated tests in 11 files** against a fresh in-memory database each time. They cover:
+The integration suite requires `TEST_DATABASE_URL` pointing to a disposable PostgreSQL database named `yuvraj_agency_test`; it creates isolated schemas for app tests. Never point this variable at production. They cover:
 - **Money:** maths and rounding, including tax, discount and fractional-quantity cases, and never adding currencies together.
 - **Invoices:** totals, sequential numbers, validation, partial and full payments, "paid only when covered", no overpayment, overdue in the business timezone, void and duplicate, retainer drafts, CSV.
 - **Finance:** collected vs invoiced vs receivables vs expenses kept separate per currency, revenue breakdowns, labelled FX estimates, and dashboard metrics calculated from the data.
@@ -283,7 +260,7 @@ npm run typecheck
 
 This runs TypeScript over the whole project. It runs single-threaded to fit in low memory. If it crashes with "cannot allocate memory" while heavy apps are open, close something or retry; setting `GOMEMLIMIT=700MiB` for the command also helps.
 
-The main workflows were also run end to end in a browser against a throwaway database:
+The main workflows were also run end to end in a browser against a throwaway PostgreSQL schema:
 - first-run setup and demo data;
 - creating and editing a client;
 - creating and editing a project with deliverables, board moves and revision counting;
@@ -341,7 +318,7 @@ src/shared/   Code used by both sides: money maths, dates, constants
 src/web/      React app: pages/, components/, portal/
 scripts/      build, migrate, demo load/remove, user create/reset, backup
 tests/        Vitest + Supertest suites
-data/         Your database and backups (created on first run, git-ignored)
+data/         Local backup dumps (git-ignored)
 ```
 
-Stack: Node 24 (native TypeScript, `node:sqlite`), Express 5, React 19, React Router, TanStack Query, Tailwind CSS 4, Vite, Zod, Vitest.
+Stack: Node 24 (native TypeScript, PostgreSQL via `pg`), Express 5, React 19, React Router, TanStack Query, Tailwind CSS 4, Vite, Zod, Vitest.

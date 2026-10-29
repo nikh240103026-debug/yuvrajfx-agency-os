@@ -114,11 +114,11 @@ function isHttps(ctx: AppContext, req: Request): boolean {
   return ctx.config.cookieSecure || req.secure || (fromLoopback(req) && req.get('x-forwarded-proto') === 'https');
 }
 
-export function createSession(ctx: AppContext, userId: number, req: Request, res: Response): void {
+export async function createSession(ctx: AppContext, userId: number, req: Request, res: Response): Promise<void> {
   const token = randomBytes(32).toString('base64url');
   const now = ctx.clock.now();
   const expires = new Date(now.getTime() + SESSION_DAYS * 86_400_000);
-  ctx.db.insert('sessions', {
+  await ctx.db.insert('sessions', {
     id: sha256(token),
     user_id: userId,
     created_at: now.toISOString(),
@@ -127,7 +127,7 @@ export function createSession(ctx: AppContext, userId: number, req: Request, res
     user_agent: String(req.headers['user-agent'] ?? '').slice(0, 300),
     ip: clientIp(req),
   });
-  ctx.db.run('UPDATE users SET last_login_at = :at WHERE id = :id', { at: now.toISOString(), id: userId });
+  await ctx.db.run('UPDATE users SET last_login_at = :at WHERE id = :id', { at: now.toISOString(), id: userId });
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
@@ -137,8 +137,8 @@ export function createSession(ctx: AppContext, userId: number, req: Request, res
   });
 }
 
-export function destroySession(ctx: AppContext, req: Request, res: Response): void {
-  if (req.sessionId) ctx.db.run('DELETE FROM sessions WHERE id = :id', { id: req.sessionId });
+export async function destroySession(ctx: AppContext, req: Request, res: Response): Promise<void> {
+  if (req.sessionId) await ctx.db.run('DELETE FROM sessions WHERE id = :id', { id: req.sessionId });
   res.clearCookie(SESSION_COOKIE, { path: '/', httpOnly: true, sameSite: 'lax', secure: isHttps(ctx, req) });
 }
 
@@ -159,10 +159,10 @@ type SessionRow = {
 
 /** Loads the signed-in user (if any) onto req.user. Never throws for anonymous requests. */
 export function sessionMiddleware(ctx: AppContext) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const token = readCookie(req, SESSION_COOKIE);
     if (!token) return next();
-    const row = ctx.db.get<SessionRow>(
+    const row = await ctx.db.get<SessionRow>(
       `SELECT s.id AS session_id, s.expires_at, s.last_seen_at, u.id, u.email, u.name, u.role, u.client_id,
               u.team_member_id, u.must_change_password, u.disabled, c.archived_at AS client_archived
          FROM sessions s
@@ -173,13 +173,13 @@ export function sessionMiddleware(ctx: AppContext) {
     );
     const now = ctx.clock.now();
     if (!row || row.expires_at <= now.toISOString() || row.disabled || (row.role === 'client' && row.client_archived)) {
-      if (row) ctx.db.run('DELETE FROM sessions WHERE id = :id', { id: row.session_id });
+      if (row) await ctx.db.run('DELETE FROM sessions WHERE id = :id', { id: row.session_id });
       res.clearCookie(SESSION_COOKIE, { path: '/' });
       return next();
     }
     // Sliding expiry, refreshed at most every 12 hours.
     if (now.getTime() - Date.parse(row.last_seen_at) > 12 * 3_600_000) {
-      ctx.db.run('UPDATE sessions SET last_seen_at = :now, expires_at = :exp WHERE id = :id', {
+      await ctx.db.run('UPDATE sessions SET last_seen_at = :now, expires_at = :exp WHERE id = :id', {
         now: now.toISOString(),
         exp: new Date(now.getTime() + SESSION_DAYS * 86_400_000).toISOString(),
         id: row.session_id,

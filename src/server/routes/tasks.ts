@@ -34,18 +34,18 @@ const listQuery = z.object({
   q: qStr(),
 });
 
-function checkRefs(ctx: AppContext, b: { client_id?: number | null; project_id?: number | null; lead_id?: number | null; assignee_id?: number | null }) {
-  const check = (table: string, id: number | null | undefined, label: string) => {
-    if (id && !ctx.db.get(`SELECT 1 FROM ${table} WHERE id = :id`, { id })) throw badRequest(`That ${label} does not exist.`);
+async function checkRefs(ctx: AppContext, b: { client_id?: number | null; project_id?: number | null; lead_id?: number | null; assignee_id?: number | null }) {
+  const check = async (table: string, id: number | null | undefined, label: string) => {
+    if (id && !await ctx.db.get(`SELECT 1 FROM ${table} WHERE id = :id`, { id })) throw badRequest(`That ${label} does not exist.`);
   };
-  check('clients', b.client_id, 'client');
-  check('projects', b.project_id, 'project');
-  check('leads', b.lead_id, 'lead');
-  check('team_members', b.assignee_id, 'team member');
+  await check('clients', b.client_id, 'client');
+  await check('projects', b.project_id, 'project');
+  await check('leads', b.lead_id, 'lead');
+  await check('team_members', b.assignee_id, 'team member');
 }
 
-export function listTasks(ctx: AppContext, q: Partial<z.output<typeof listQuery>>) {
-  const today = ctx.today();
+export async function listTasks(ctx: AppContext, q: Partial<z.output<typeof listQuery>>) {
+  const today = await ctx.today();
   const where: string[] = ['1 = 1'];
   const params: Record<string, unknown> = { today, week: addDays(today, 7) };
   const open = `t.status IN ('todo','in_progress')`;
@@ -98,23 +98,23 @@ export function listTasks(ctx: AppContext, q: Partial<z.output<typeof listQuery>
 export function tasksRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const q = parse(listQuery, req.query);
-    const today = ctx.today();
-    const counts = ctx.db.get(
-      `SELECT SUM(status IN ('todo','in_progress') AND due_date <= :today) AS today,
-              SUM(status IN ('todo','in_progress') AND due_date < :today) AS overdue,
-              SUM(status IN ('todo','in_progress') AND due_date > :today) AS upcoming,
-              SUM(status IN ('todo','in_progress')) AS open,
-              SUM(status IN ('done','cancelled')) AS done
+    const today = await ctx.today();
+    const counts = await ctx.db.get(
+      `SELECT COUNT(*) FILTER (WHERE status IN ('todo','in_progress') AND due_date <= :today) AS today,
+              COUNT(*) FILTER (WHERE status IN ('todo','in_progress') AND due_date < :today) AS overdue,
+              COUNT(*) FILTER (WHERE status IN ('todo','in_progress') AND due_date > :today) AS upcoming,
+              COUNT(*) FILTER (WHERE status IN ('todo','in_progress')) AS open,
+              COUNT(*) FILTER (WHERE status IN ('done','cancelled')) AS done
          FROM tasks`,
       { today },
     );
-    res.json({ tasks: listTasks(ctx, q), counts });
+    res.json({ tasks: await listTasks(ctx, q), counts });
   });
 
-  r.get('/export.csv', (_req, res) => {
-    const rows = listTasks(ctx, { view: 'all' });
+  r.get('/export.csv', async (_req, res) => {
+    const rows = await listTasks(ctx, { view: 'all' });
     const csv = toCsv(rows, [
       { header: 'Title', value: (t) => t.title },
       { header: 'Status', value: (t) => TASK_STATUS_LABELS[t.status as keyof typeof TASK_STATUS_LABELS] },
@@ -127,15 +127,15 @@ export function tasksRouter(ctx: AppContext): Router {
       { header: 'Completed', value: (t) => t.completed_at },
       { header: 'Description', value: (t) => t.description },
     ]);
-    sendCsv(ctx, res, 'tasks', csv);
+    await sendCsv(ctx, res, 'tasks', csv);
   });
 
-  r.post('/', (req, res) => {
+  r.post('/', async (req, res) => {
     const body = parse(taskCreate, req.body);
-    checkRefs(ctx, body);
+    await checkRefs(ctx, body);
     const now = ctx.nowIso();
     const status = body.status ?? 'todo';
-    const id = ctx.db.insert('tasks', {
+    const id = await ctx.db.insert('tasks', {
       ...body,
       priority: body.priority ?? 'medium',
       status,
@@ -147,22 +147,22 @@ export function tasksRouter(ctx: AppContext): Router {
     res.status(201).json({ id });
   });
 
-  r.patch('/:id', (req, res) => {
+  r.patch('/:id', async (req, res) => {
     const id = idParam(req);
-    const existing = ctx.db.get<{ status: string; title: string; client_id: number | null; project_id: number | null; is_demo: number }>(
+    const existing = await ctx.db.get<{ status: string; title: string; client_id: number | null; project_id: number | null; is_demo: number }>(
       'SELECT status, title, client_id, project_id, is_demo FROM tasks WHERE id = :id',
       { id },
     );
     if (!existing) throw notFound('Task');
     const body = parse(taskUpdate, req.body);
-    checkRefs(ctx, body);
+    await checkRefs(ctx, body);
     const now = ctx.nowIso();
     const patch: Record<string, unknown> = { ...body, updated_at: now };
     if (body.status && body.status !== existing.status) patch.completed_at = body.status === 'done' ? now : null;
-    ctx.db.tx(() => {
-      ctx.db.update('tasks', id, patch);
+    await ctx.db.tx(async () => {
+      await ctx.db.update('tasks', id, patch);
       if (body.status === 'done' && existing.status !== 'done') {
-        logActivity(ctx, actorOf(req), {
+        await logActivity(ctx, actorOf(req), {
           entity_type: 'task',
           entity_id: id,
           client_id: body.client_id ?? existing.client_id,
@@ -176,8 +176,8 @@ export function tasksRouter(ctx: AppContext): Router {
     res.json({ ok: true });
   });
 
-  r.delete('/:id', (req, res) => {
-    const changes = ctx.db.run('DELETE FROM tasks WHERE id = :id', { id: idParam(req) }).changes;
+  r.delete('/:id', async (req, res) => {
+    const changes = (await ctx.db.run('DELETE FROM tasks WHERE id = :id', { id: idParam(req) })).changes;
     if (!changes) throw notFound('Task');
     res.json({ ok: true });
   });
@@ -243,26 +243,26 @@ function validateTemplate(kind: string, template: unknown) {
 export function recurringRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (_req, res) => {
-    const today = ctx.today();
-    const rules = ctx.db.all<Record<string, unknown> & { id: number; template: string }>('SELECT * FROM recurring_rules ORDER BY active DESC, next_occurrence, id');
+  r.get('/', async (_req, res) => {
+    const today = await ctx.today();
+    const rules = await ctx.db.all<Record<string, unknown> & { id: number; template: string }>('SELECT * FROM recurring_rules ORDER BY active DESC, next_occurrence, id');
     res.json({
-      rules: rules.map((rule) => ({
+      rules: await Promise.all(rules.map(async (rule) => ({
         ...rule,
         template: json(rule.template, {}),
         upcoming: upcomingOccurrences(rule as never, rule.next_occurrence as string > today ? (rule.next_occurrence as string) : today, 3),
-        generated: ctx.db.value<number>(`SELECT (SELECT COUNT(*) FROM tasks WHERE recurring_rule_id = :id) + (SELECT COUNT(*) FROM projects WHERE recurring_rule_id = :id)`, { id: rule.id }) ?? 0,
-      })),
+        generated: (await ctx.db.value<number>(`SELECT (SELECT COUNT(*) FROM tasks WHERE recurring_rule_id = :id) + (SELECT COUNT(*) FROM projects WHERE recurring_rule_id = :id)`, { id: rule.id })) ?? 0,
+      }))),
     });
   });
 
-  r.post('/', (req, res) => {
+  r.post('/', async (req, res) => {
     const body = parse(ruleCreate, req.body);
     const template = validateTemplate(body.kind, body.template);
     if (body.end_date && body.end_date < body.start_date) throw badRequest('The end date is before the start date.');
     const shape = { frequency: body.frequency, interval: body.interval ?? 1, weekday: body.weekday, month_day: body.month_day, start_date: body.start_date };
     const now = ctx.nowIso();
-    const id = ctx.db.insert('recurring_rules', {
+    const id = await ctx.db.insert('recurring_rules', {
       ...body,
       ...shape,
       template,
@@ -272,14 +272,14 @@ export function recurringRouter(ctx: AppContext): Router {
       created_at: now,
       updated_at: now,
     });
-    logActivity(ctx, actorOf(req), { entity_type: 'recurring_rule', entity_id: id, action: 'created', summary: `Recurring ${body.kind} “${body.title}” set up (${body.frequency})` });
-    const generated = materializeRecurring(ctx, actorOf(req), id);
+    await logActivity(ctx, actorOf(req), { entity_type: 'recurring_rule', entity_id: id, action: 'created', summary: `Recurring ${body.kind} “${body.title}” set up (${body.frequency})` });
+    const generated = await materializeRecurring(ctx, actorOf(req), id);
     res.status(201).json({ id, generated });
   });
 
-  r.patch('/:id', (req, res) => {
+  r.patch('/:id', async (req, res) => {
     const id = idParam(req);
-    const existing = ctx.db.get<Record<string, unknown> & { kind: string; frequency: string; interval: number; weekday: number | null; month_day: number | null; start_date: string; next_occurrence: string }>(
+    const existing = await ctx.db.get<Record<string, unknown> & { kind: string; frequency: string; interval: number; weekday: number | null; month_day: number | null; start_date: string; next_occurrence: string }>(
       'SELECT * FROM recurring_rules WHERE id = :id',
       { id },
     );
@@ -299,22 +299,22 @@ export function recurringRouter(ctx: AppContext): Router {
         start_date: body.start_date ?? existing.start_date,
       };
       // Re-anchor from today so a schedule edit never back-fills old dates.
-      const upcoming = upcomingOccurrences(shape, ctx.today(), 1);
+      const upcoming = upcomingOccurrences(shape, await ctx.today(), 1);
       patch.next_occurrence = upcoming[0] ?? firstOccurrence(shape);
     }
-    ctx.db.update('recurring_rules', id, patch);
+    await ctx.db.update('recurring_rules', id, patch);
     res.json({ ok: true });
   });
 
-  r.post('/:id/run', (req, res) => {
+  r.post('/:id/run', async (req, res) => {
     const id = idParam(req);
-    if (!ctx.db.get('SELECT 1 FROM recurring_rules WHERE id = :id', { id })) throw notFound('Recurring rule');
-    res.json({ generated: materializeRecurring(ctx, actorOf(req), id) });
+    if (!await ctx.db.get('SELECT 1 FROM recurring_rules WHERE id = :id', { id })) throw notFound('Recurring rule');
+    res.json({ generated: await materializeRecurring(ctx, actorOf(req), id) });
   });
 
-  r.delete('/:id', (req, res) => {
+  r.delete('/:id', async (req, res) => {
     const id = idParam(req);
-    const changes = ctx.db.run('DELETE FROM recurring_rules WHERE id = :id', { id }).changes;
+    const changes = (await ctx.db.run('DELETE FROM recurring_rules WHERE id = :id', { id })).changes;
     if (!changes) throw notFound('Recurring rule');
     res.json({ ok: true });
   });

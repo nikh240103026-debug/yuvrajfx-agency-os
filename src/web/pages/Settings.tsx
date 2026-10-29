@@ -32,7 +32,7 @@ type Settings = {
   invoice_footer: string;
   owner_report_email: string;
 };
-type System = { db_path: string; db_size: number | null; node: string; email: { configured: boolean; description: string }; demo: Record<string, number>; today: string };
+type System = { database: string; node: string; email: { configured: boolean; description: string }; demo: Record<string, number>; today: string };
 type UserRow = { id: number; email: string; name: string; role: Role; client_id: number | null; client_name: string | null; team_member_id: number | null; team_member_name: string | null; disabled: number; must_change_password: number; last_login_at: string | null };
 
 const TIMEZONES = ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
@@ -359,12 +359,8 @@ function DataTab({ system }: { system: System }) {
         </h3>
         <dl className="mt-3 text-[12.5px] flex flex-col gap-1.5">
           <div>
-            <dt className="text-ink-3">Database file</dt>
-            <dd className="text-ink-2 font-mono text-[12px] break-all">{system.db_path}</dd>
-          </div>
-          <div>
-            <dt className="text-ink-3">Size</dt>
-            <dd className="text-ink-2">{system.db_size ? `${(system.db_size / 1024).toFixed(0)} KB` : '—'}</dd>
+            <dt className="text-ink-3">Database engine</dt>
+            <dd className="text-ink-2 font-mono text-[12px] break-all">{system.database}</dd>
           </div>
         </dl>
         <div className="mt-4 flex flex-wrap gap-2">
@@ -372,7 +368,7 @@ function DataTab({ system }: { system: System }) {
             Download backup
           </Button>
         </div>
-        <p className="mt-2 text-[12px] text-ink-3">A consistent copy of the whole database (also kept in data/backups). Copy it to another drive or cloud folder regularly.</p>
+        <p className="mt-2 text-[12px] text-ink-3">Downloads a PostgreSQL custom-format dump when pg_dump is installed on the server. Also configure automated backups with your database provider.</p>
       </Card>
       <Card className="p-5 lg:col-span-2">
         <h3 className="text-[14px] font-semibold">CSV exports</h3>

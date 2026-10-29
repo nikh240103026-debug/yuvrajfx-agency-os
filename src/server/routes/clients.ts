@@ -110,9 +110,9 @@ export type ClientListRow = Record<string, unknown> & {
   outstanding: { currency: string; amount_minor: number }[];
 };
 
-export function listClients(ctx: AppContext, query: Partial<z.output<typeof listQuery>>): ClientListRow[] {
+export async function listClients(ctx: AppContext, query: Partial<z.output<typeof listQuery>>): Promise<ClientListRow[]> {
   const where: string[] = [];
-  const params: Record<string, unknown> = { today: ctx.today() };
+  const params: Record<string, unknown> = { today: await ctx.today() };
   if (query.archived === 'only') where.push('c.archived_at IS NOT NULL');
   else if (query.archived !== '1') where.push('c.archived_at IS NULL');
   if (query.status && query.status !== 'all') {
@@ -120,7 +120,7 @@ export function listClients(ctx: AppContext, query: Partial<z.output<typeof list
     params.status = query.status;
   }
   if (query.tag) {
-    where.push('EXISTS (SELECT 1 FROM json_each(c.tags) WHERE value = :tag)');
+    where.push('EXISTS (SELECT 1 FROM jsonb_array_elements_text(c.tags::jsonb) AS tag(value) WHERE value = :tag)');
     params.tag = query.tag.toLowerCase();
   }
   if (query.q) {
@@ -128,8 +128,8 @@ export function listClients(ctx: AppContext, query: Partial<z.output<typeof list
     params.q = likeParam(query.q);
   }
   const sortCol: Record<string, string> = {
-    name: 'c.name COLLATE NOCASE',
-    company: 'COALESCE(c.company, c.name) COLLATE NOCASE',
+    name: 'lower(c.name)',
+    company: 'lower(COALESCE(c.company, c.name))',
     // Amounts only compare within one currency, so group by currency first.
     retainer: 'c.currency, COALESCE(c.retainer_minor, 0)',
     created: 'c.created_at',
@@ -137,7 +137,7 @@ export function listClients(ctx: AppContext, query: Partial<z.output<typeof list
     status: 'c.status',
     activity: "COALESCE(last_activity_at, '')",
   };
-  const rows = ctx.db.all<Record<string, unknown>>(
+  const rows = await ctx.db.all<Record<string, unknown>>(
     `SELECT c.*,
             (SELECT COUNT(*) FROM projects p WHERE p.client_id = c.id AND p.archived_at IS NULL
                 AND p.status IN ('backlog','editing','internal_review','client_review','revisions','approved')) AS active_projects,
@@ -153,7 +153,7 @@ export function listClients(ctx: AppContext, query: Partial<z.output<typeof list
       ORDER BY ${sortCol[query.sort ?? 'name']} ${query.order === 'desc' ? 'DESC' : 'ASC'}, c.id`,
     params,
   );
-  const balances = ctx.db.all<{ client_id: number; currency: string; amount_minor: number }>(
+  const balances = await ctx.db.all<{ client_id: number; currency: string; amount_minor: number }>(
     `SELECT client_id, currency, SUM(balance_minor) AS amount_minor FROM invoice_balances
       WHERE state = 'sent' AND balance_minor > 0 GROUP BY client_id, currency`,
   );
@@ -166,24 +166,24 @@ export function listClients(ctx: AppContext, query: Partial<z.output<typeof list
 export function clientsRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const query = parse(listQuery, req.query);
-    const rows = listClients(ctx, query);
+    const rows = await listClients(ctx, query);
     res.json({ clients: canSeeFinance(req) ? rows : rows.map((row) => stripFields(row, FINANCE_FIELDS)) });
   });
 
-  r.get('/tags', (_req, res) => {
-    const tags = ctx.db.all<{ tag: string; count: number }>(
-      `SELECT j.value AS tag, COUNT(*) AS count FROM clients c, json_each(c.tags) j WHERE c.archived_at IS NULL GROUP BY j.value ORDER BY count DESC, tag`,
+  r.get('/tags', async (_req, res) => {
+    const tags = await ctx.db.all<{ tag: string; count: number }>(
+      `SELECT j.value AS tag, COUNT(*) AS count FROM clients c CROSS JOIN LATERAL jsonb_array_elements_text(c.tags::jsonb) AS j(value) WHERE c.archived_at IS NULL GROUP BY j.value ORDER BY count DESC, tag`,
     );
-    const packages = ctx.db
-      .all<{ service_package: string }>(`SELECT DISTINCT service_package FROM clients WHERE service_package IS NOT NULL ORDER BY service_package`)
+    const packages = await (await ctx.db
+      .all<{ service_package: string }>(`SELECT DISTINCT service_package FROM clients WHERE service_package IS NOT NULL ORDER BY service_package`))
       .map((p) => p.service_package);
     res.json({ tags, packages });
   });
 
-  r.get('/export.csv', requireAdmin, (_req, res) => {
-    const rows = listClients(ctx, { archived: '1', sort: 'name', order: 'asc' });
+  r.get('/export.csv', requireAdmin, async (_req, res) => {
+    const rows = await listClients(ctx, { archived: '1', sort: 'name', order: 'asc' });
     const csv = toCsv(rows, [
       { header: 'ID', value: (c) => c.id },
       { header: 'Name', value: (c) => c.name },
@@ -207,33 +207,33 @@ export function clientsRouter(ctx: AppContext): Router {
       { header: 'Archived', value: (c) => (c.archived_at ? 'yes' : '') },
       { header: 'Demo data', value: (c) => (c.is_demo ? 'yes' : '') },
     ]);
-    sendCsv(ctx, res, 'clients', csv);
+    await sendCsv(ctx, res, 'clients', csv);
   });
 
-  r.post('/', requireAdmin, (req, res) => {
+  r.post('/', requireAdmin, async (req, res) => {
     const body = parse(createSchema, req.body);
     const now = ctx.nowIso();
-    const id = ctx.db.tx(() => {
-      const id = ctx.db.insert('clients', {
+    const id = await ctx.db.tx(async () => {
+      const id = await ctx.db.insert('clients', {
         ...body,
         billing_cycle: body.billing_cycle ?? 'monthly',
-        payment_terms_days: body.payment_terms_days ?? ctx.settings().default_payment_terms_days,
+        payment_terms_days: body.payment_terms_days ?? (await ctx.settings()).default_payment_terms_days,
         status: body.status ?? 'active',
         created_at: now,
         updated_at: now,
       });
-      logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: id, action: 'created', summary: `Client ${body.company || body.name} added` });
+      await logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: id, action: 'created', summary: `Client ${body.company || body.name} added` });
       return id;
     });
     res.status(201).json({ id });
   });
 
-  r.get('/:id', (req, res) => {
+  r.get('/:id', async (req, res) => {
     const id = idParam(req);
-    const row = ctx.db.get<Record<string, unknown>>('SELECT * FROM clients WHERE id = :id', { id });
+    const row = await ctx.db.get<Record<string, unknown>>('SELECT * FROM clients WHERE id = :id', { id });
     if (!row) throw notFound('Client');
     const client = withJson(row, { tags: [], socials: {} });
-    const projects = ctx.db
+    const projects = await (await ctx.db
       .all<Record<string, unknown>>(
         `SELECT p.id, p.name, p.type, p.status, p.priority, p.deadline, p.billing_type, p.price_minor, p.currency, p.is_demo, p.archived_at,
                 t.name AS editor_name,
@@ -242,21 +242,21 @@ export function clientsRouter(ctx: AppContext): Router {
            FROM projects p LEFT JOIN team_members t ON t.id = p.editor_id
           WHERE p.client_id = :id ORDER BY (p.status IN ('delivered','cancelled')), COALESCE(p.deadline, '9999') , p.id DESC`,
         { id },
-      )
+      ))
       .map((p) => (canSeeFinance(req) ? p : stripFields(p, ['price_minor'])));
-    const deliverables = ctx.db.all(
+    const deliverables = await ctx.db.all(
       `SELECT d.id, d.title, d.status, d.deadline, d.platform, d.revision_count, d.project_id, p.name AS project_name
          FROM deliverables d JOIN projects p ON p.id = d.project_id
         WHERE p.client_id = :id AND d.status <> 'delivered'
         ORDER BY COALESCE(d.deadline, '9999'), d.id LIMIT 50`,
       { id },
     );
-    const portalUsers = ctx.db.all('SELECT id, email, name, disabled, last_login_at, must_change_password, created_at FROM users WHERE client_id = :id ORDER BY id', { id });
-    const lead = ctx.db.get('SELECT id, name, source, closed_at FROM leads WHERE client_id = :id ORDER BY id DESC LIMIT 1', { id }) ?? null;
+    const portalUsers = await ctx.db.all('SELECT id, email, name, disabled, last_login_at, must_change_password, created_at FROM users WHERE client_id = :id ORDER BY id', { id });
+    const lead = await ctx.db.get('SELECT id, name, source, closed_at FROM leads WHERE client_id = :id ORDER BY id DESC LIMIT 1', { id }) ?? null;
     let finance: unknown = null;
     if (canSeeFinance(req)) {
-      const invoices = listInvoices(ctx, { client_id: id });
-      const collectedRows = ctx.db.all<{ currency: string; amount_minor: number }>(
+      const invoices = await listInvoices(ctx, { client_id: id });
+      const collectedRows = await ctx.db.all<{ currency: string; amount_minor: number }>(
         'SELECT currency, SUM(amount_minor) AS amount_minor FROM payments WHERE client_id = :id GROUP BY currency',
         { id },
       );
@@ -278,21 +278,21 @@ export function clientsRouter(ctx: AppContext): Router {
     });
   });
 
-  r.patch('/:id', requireAdmin, (req, res) => {
+  r.patch('/:id', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const existing = ctx.db.get<{ id: number; status: string; name: string; company: string | null; retainer_minor: number | null; currency: string }>(
+    const existing = await ctx.db.get<{ id: number; status: string; name: string; company: string | null; retainer_minor: number | null; currency: string }>(
       'SELECT id, status, name, company, retainer_minor, currency FROM clients WHERE id = :id',
       { id },
     );
     if (!existing) throw notFound('Client');
     const body = parse(updateSchema, req.body);
-    ctx.db.tx(() => {
-      ctx.db.update('clients', id, { ...body, updated_at: ctx.nowIso() });
+    await ctx.db.tx(async () => {
+      await ctx.db.update('clients', id, { ...body, updated_at: ctx.nowIso() });
       const label = body.company ?? existing.company ?? body.name ?? existing.name;
       const changes: string[] = [];
       if (body.status && body.status !== existing.status) changes.push(`status ${CLIENT_STATUS_LABELS[existing.status as keyof typeof CLIENT_STATUS_LABELS]} → ${CLIENT_STATUS_LABELS[body.status]}`);
       if (body.retainer_minor !== undefined && body.retainer_minor !== existing.retainer_minor) changes.push('retainer updated');
-      logActivity(ctx, actorOf(req), {
+      await logActivity(ctx, actorOf(req), {
         entity_type: 'client',
         entity_id: id,
         client_id: id,
@@ -303,56 +303,56 @@ export function clientsRouter(ctx: AppContext): Router {
     res.json({ ok: true });
   });
 
-  r.post('/:id/archive', requireAdmin, (req, res) => {
+  r.post('/:id/archive', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const c = ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
+    const c = await ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
     if (!c) throw notFound('Client');
-    ctx.db.tx(() => {
-      ctx.db.run('UPDATE clients SET archived_at = :at, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('UPDATE clients SET archived_at = :at, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
       // Archived clients lose portal access immediately.
-      ctx.db.run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE client_id = :id)', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: id, action: 'archived', summary: `Client ${c.company || c.name} archived` });
+      await ctx.db.run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE client_id = :id)', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: id, action: 'archived', summary: `Client ${c.company || c.name} archived` });
     });
     res.json({ ok: true });
   });
 
-  r.post('/:id/restore', requireAdmin, (req, res) => {
+  r.post('/:id/restore', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const c = ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
+    const c = await ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
     if (!c) throw notFound('Client');
-    ctx.db.run('UPDATE clients SET archived_at = NULL, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
-    logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: id, action: 'restored', summary: `Client ${c.company || c.name} restored` });
+    await ctx.db.run('UPDATE clients SET archived_at = NULL, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+    await logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: id, action: 'restored', summary: `Client ${c.company || c.name} restored` });
     res.json({ ok: true });
   });
 
   /** Hard delete is only allowed for clients with no projects, invoices or payments. */
-  r.delete('/:id', requireAdmin, (req, res) => {
+  r.delete('/:id', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const c = ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
+    const c = await ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
     if (!c) throw notFound('Client');
-    const refs = ctx.db.get<{ p: number; i: number }>(
+    const refs = await ctx.db.get<{ p: number; i: number }>(
       'SELECT (SELECT COUNT(*) FROM projects WHERE client_id = :id) AS p, (SELECT COUNT(*) FROM invoices WHERE client_id = :id) AS i',
       { id },
     )!;
     if (refs.p > 0 || refs.i > 0) throw conflict('This client has projects or invoices. Archive the client instead, so your history stays intact.');
-    ctx.db.tx(() => {
-      ctx.db.run('DELETE FROM clients WHERE id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: null, action: 'deleted', summary: `Client ${c.company || c.name} deleted` });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('DELETE FROM clients WHERE id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'client', entity_id: id, client_id: null, action: 'deleted', summary: `Client ${c.company || c.name} deleted` });
     });
     res.json({ ok: true });
   });
 
-  r.get('/:id/timeline', (req, res) => {
+  r.get('/:id/timeline', async (req, res) => {
     const id = idParam(req);
-    if (!ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id })) throw notFound('Client');
+    if (!await ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id })) throw notFound('Client');
     const finance = canSeeFinance(req);
-    const activity = ctx.db.all<Record<string, unknown>>(
+    const activity = await ctx.db.all<Record<string, unknown>>(
       `SELECT id, 'activity' AS kind, entity_type, entity_id, action, summary, actor_type, actor_name, created_at AS at
          FROM activity WHERE client_id = :id ${finance ? '' : "AND entity_type NOT IN ('invoice','payment')"}
         ORDER BY created_at DESC LIMIT 150`,
       { id },
     );
-    const comms = ctx.db.all<Record<string, unknown>>(
+    const comms = await ctx.db.all<Record<string, unknown>>(
       `SELECT c.id, 'communication' AS kind, c.channel, c.direction, c.subject, c.body, c.occurred_at, u.name AS actor_name,
               c.occurred_at || 'T12:00:00.000Z' AS at, c.created_at
          FROM communications c LEFT JOIN users u ON u.id = c.created_by
@@ -363,12 +363,12 @@ export function clientsRouter(ctx: AppContext): Router {
     res.json({ items });
   });
 
-  r.post('/:id/communications', (req, res) => {
+  r.post('/:id/communications', async (req, res) => {
     const id = idParam(req);
-    const c = ctx.db.get<{ name: string; company: string | null; is_demo: number }>('SELECT name, company, is_demo FROM clients WHERE id = :id', { id });
+    const c = await ctx.db.get<{ name: string; company: string | null; is_demo: number }>('SELECT name, company, is_demo FROM clients WHERE id = :id', { id });
     if (!c) throw notFound('Client');
     const body = parse(commSchema, req.body);
-    const commId = ctx.db.insert('communications', {
+    const commId = await ctx.db.insert('communications', {
       client_id: id,
       channel: body.channel,
       direction: body.direction ?? 'outbound',
@@ -381,10 +381,10 @@ export function clientsRouter(ctx: AppContext): Router {
     res.status(201).json({ id: commId });
   });
 
-  r.delete('/:id/communications/:commId', (req, res) => {
+  r.delete('/:id/communications/:commId', async (req, res) => {
     const id = idParam(req);
     const commId = idParam(req, 'commId');
-    const changes = ctx.db.run('DELETE FROM communications WHERE id = :commId AND client_id = :id', { id, commId }).changes;
+    const changes = (await ctx.db.run('DELETE FROM communications WHERE id = :commId AND client_id = :id', { id, commId })).changes;
     if (!changes) throw notFound('Log entry');
     res.json({ ok: true });
   });

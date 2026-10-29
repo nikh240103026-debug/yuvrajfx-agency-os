@@ -1,6 +1,6 @@
 
 import { describe, expect, test } from 'vitest';
-import { compileSql } from '../src/server/db/postgres.ts';
+import { compileSql } from '../src/server/db/db.ts';
 
 describe('PostgreSQL SQL compiler', () => {
   test('converts named parameters to PostgreSQL placeholders', () => {

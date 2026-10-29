@@ -1,11 +1,29 @@
 import request from 'supertest';
 import { expect } from 'vitest';
 import { Db } from '../src/server/db/db.ts';
-import { migrate } from '../src/server/db/migrations.ts';
+import { migratePostgres } from '../src/server/db/postgres-migrations.ts';
+import { Pool } from 'pg';
 import { createContext } from '../src/server/context.ts';
 import { createApp } from '../src/server/app.ts';
 import { createMailer, createRecordingMailer } from '../src/server/services/mailer.ts';
 import type { Config } from '../src/server/config.ts';
+
+// Integration tests require a disposable PostgreSQL database, never the production database.
+const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
+if (!TEST_DATABASE_URL) throw new Error('TEST_DATABASE_URL is required for PostgreSQL-backed tests. Use a disposable database named yuvraj_agency_test.');
+const dbName = new URL(TEST_DATABASE_URL).pathname.replace(/^\//, '');
+if (dbName !== 'yuvraj_agency_test') throw new Error('Safety check failed: TEST_DATABASE_URL must target yuvraj_agency_test.');
+let schemaCounter = 0;
+const testSchemas = new Set<string>();
+const testDbs = new Set<Db>();
+let testsCleanedUp = false;
+process.on('beforeExit', async () => {
+  if (testsCleanedUp) return;
+  testsCleanedUp = true;
+  for (const db of testDbs) await db.close().catch(() => undefined);
+  const pool = new Pool({ connectionString: TEST_DATABASE_URL, allowExitOnIdle: true });
+  try { for (const schema of testSchemas) await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); } finally { await pool.end(); }
+});
 
 // Cheap password hashing for tests only (production uses N = 32768).
 process.env.YFX_SCRYPT_N = '1024';
@@ -13,12 +31,17 @@ process.env.YFX_SCRYPT_N = '1024';
 export const OWNER = { name: 'Test Owner', email: 'owner@yfx.test', password: 'correct horse battery staple' };
 
 /** A fresh app on an in-memory database with a controllable clock (default: 27 Oct 2026, noon IST). */
-export function makeApp(opts: { now?: string; recordingMailer?: boolean } = {}) {
-  const db = new Db(':memory:');
-  migrate(db);
+export async function makeApp(opts: { now?: string; recordingMailer?: boolean } = {}) {
+  const schema = `yfx_test_${process.pid}_${++schemaCounter}`;
+  const bootstrap = new Pool({ connectionString: TEST_DATABASE_URL, allowExitOnIdle: true });
+  try { await bootstrap.query(`CREATE SCHEMA ${schema}`); } finally { await bootstrap.end(); }
+  testSchemas.add(schema);
+  const db = new Db(TEST_DATABASE_URL!, schema);
+  testDbs.add(db);
+  await migratePostgres(db.pool);
   let now = new Date(opts.now ?? '2026-10-27T06:30:00.000Z');
   const mailer = opts.recordingMailer ? createRecordingMailer() : createMailer(null);
-  const config: Config = { host: '127.0.0.1', port: 0, dbPath: ':memory:', databaseUrl: null, cookieSecure: false, isDev: false, smtp: null };
+  const config: Config = { host: '127.0.0.1', port: 0, databaseUrl: TEST_DATABASE_URL!, cookieSecure: false, isDev: false, smtp: null };
   const ctx = createContext({ db, config, mailer, clock: { now: () => now } });
   const app = createApp(ctx);
   return {

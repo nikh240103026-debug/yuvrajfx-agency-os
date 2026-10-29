@@ -17,8 +17,8 @@ export type NotificationInput = {
 };
 
 /** Returns true when a new notification was created (false if it already existed). */
-export function notify(ctx: AppContext, n: NotificationInput): boolean {
-  const r = ctx.db.run(
+export async function notify(ctx: AppContext, n: NotificationInput): Promise<boolean> {
+  const r = await ctx.db.run(
     `INSERT INTO notifications (kind, audience, severity, title, body, link, entity_type, entity_id, dedupe_key, is_demo, created_at)
      VALUES (:kind, :audience, :severity, :title, :body, :link, :entity_type, :entity_id, :dedupe_key, :is_demo, :created_at)
      ON CONFLICT(dedupe_key) DO NOTHING`,
@@ -41,7 +41,7 @@ function audienceSql(user: SessionUser): string {
   return ADMIN_ROLES.includes(user.role) ? `n.audience IN ('admin','staff')` : `n.audience = 'staff'`;
 }
 
-export function listNotifications(ctx: AppContext, user: SessionUser, opts: { unreadOnly?: boolean; limit?: number } = {}) {
+export async function listNotifications(ctx: AppContext, user: SessionUser, opts: { unreadOnly?: boolean; limit?: number } = {}) {
   return ctx.db.all(
     `SELECT n.*, r.read_at FROM notifications n
        LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = :uid
@@ -51,9 +51,9 @@ export function listNotifications(ctx: AppContext, user: SessionUser, opts: { un
   );
 }
 
-export function unreadCount(ctx: AppContext, user: SessionUser): number {
+export async function unreadCount(ctx: AppContext, user: SessionUser): Promise<number> {
   return (
-    ctx.db.value<number>(
+    await ctx.db.value<number>(
       `SELECT COUNT(*) FROM notifications n LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = :uid
         WHERE ${audienceSql(user)} AND r.read_at IS NULL`,
       { uid: user.id },
@@ -61,23 +61,23 @@ export function unreadCount(ctx: AppContext, user: SessionUser): number {
   );
 }
 
-export function markRead(ctx: AppContext, user: SessionUser, ids: number[] | 'all'): number {
+export async function markRead(ctx: AppContext, user: SessionUser, ids: number[] | 'all'): Promise<number> {
   const at = ctx.nowIso();
   if (ids === 'all') {
-    return ctx.db.run(
-      `INSERT OR IGNORE INTO notification_reads (notification_id, user_id, read_at)
+    return (await ctx.db.run(
+      `INSERT INTO notification_reads (notification_id, user_id, read_at)
        SELECT n.id, :uid, :at FROM notifications n WHERE ${audienceSql(user)}`,
       { uid: user.id, at },
-    ).changes;
+    )).changes;
   }
   let n = 0;
-  ctx.db.tx(() => {
+  await ctx.db.tx(async () => {
     for (const id of ids) {
-      n += ctx.db.run(
-        `INSERT OR IGNORE INTO notification_reads (notification_id, user_id, read_at)
+      n += (await ctx.db.run(
+        `INSERT INTO notification_reads (notification_id, user_id, read_at)
          SELECT n.id, :uid, :at FROM notifications n WHERE n.id = :id AND ${audienceSql(user)}`,
         { uid: user.id, at, id },
-      ).changes;
+      )).changes;
     }
   });
   return n;

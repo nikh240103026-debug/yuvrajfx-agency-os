@@ -13,12 +13,14 @@
     "start": "node --disable-warning=ExperimentalWarning src/server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit -p tsconfig.json --singleThreaded",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "migrate": "node --disable-warning=ExperimentalWarning scripts/migrate.ts",
     "seed:demo": "node --disable-warning=ExperimentalWarning scripts/demo.ts load",
     "demo:remove": "node --disable-warning=ExperimentalWarning scripts/demo.ts remove",
     "user:create": "node --disable-warning=ExperimentalWarning scripts/create-user.ts",
-    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.ts"
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.ts",
+    "migrate:postgres": "node --disable-warning=ExperimentalWarning scripts/migrate-postgres.ts",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",

@@ -27,20 +27,20 @@ const updateSchema = z.object(fields).partial();
 
 const listQuery = z.object({ q: qStr(), category: qStr(), currency: qStr(), from: qStr(), to: qStr(), client_id: qInt(), project_id: qInt() });
 
-function checkRefs(ctx: AppContext, b: { client_id?: number | null; project_id?: number | null; team_member_id?: number | null }) {
-  if (b.client_id && !ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: b.client_id })) throw badRequest('That client does not exist.');
+async function checkRefs(ctx: AppContext, b: { client_id?: number | null; project_id?: number | null; team_member_id?: number | null }) {
+  if (b.client_id && !await ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: b.client_id })) throw badRequest('That client does not exist.');
   if (b.project_id) {
-    const p = ctx.db.get<{ client_id: number }>('SELECT client_id FROM projects WHERE id = :id', { id: b.project_id });
+    const p = await ctx.db.get<{ client_id: number }>('SELECT client_id FROM projects WHERE id = :id', { id: b.project_id });
     if (!p) throw badRequest('That project does not exist.');
     if (b.client_id && p.client_id !== b.client_id) throw badRequest('That project belongs to a different client.');
   }
-  if (b.team_member_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: b.team_member_id })) throw badRequest('That team member does not exist.');
+  if (b.team_member_id && !await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: b.team_member_id })) throw badRequest('That team member does not exist.');
 }
 
 export function expensesRouter(ctx: AppContext): Router {
   const r = Router();
 
-  function list(q: z.output<typeof listQuery>) {
+  async function list(q: z.output<typeof listQuery>) {
     const where: string[] = ['1 = 1'];
     const params: Record<string, unknown> = {};
     for (const key of ['category', 'currency', 'client_id', 'project_id'] as const) {
@@ -69,13 +69,13 @@ export function expensesRouter(ctx: AppContext): Router {
     );
   }
 
-  r.get('/', (req, res) => {
-    const rows = list(parse(listQuery, req.query));
-    res.json({ expenses: rows, totals: sumByCurrency(rows, ctx.settings().base_currency) });
+  r.get('/', async (req, res) => {
+    const rows = await list(parse(listQuery, req.query));
+    res.json({ expenses: rows, totals: sumByCurrency(rows, (await ctx.settings()).base_currency) });
   });
 
-  r.get('/export.csv', (req, res) => {
-    const rows = list(parse(listQuery, req.query));
+  r.get('/export.csv', async (req, res) => {
+    const rows = await list(parse(listQuery, req.query));
     const csv = toCsv(rows, [
       { header: 'Date', value: (e) => e.date },
       { header: 'Category', value: (e) => EXPENSE_CATEGORY_LABELS[e.category as keyof typeof EXPENSE_CATEGORY_LABELS] ?? e.category },
@@ -89,16 +89,16 @@ export function expensesRouter(ctx: AppContext): Router {
       { header: 'Receipt', value: (e) => e.receipt_url },
       { header: 'Demo data', value: (e) => (e.is_demo ? 'yes' : '') },
     ]);
-    sendCsv(ctx, res, 'expenses', csv);
+    await sendCsv(ctx, res, 'expenses', csv);
   });
 
-  r.post('/', (req, res) => {
+  r.post('/', async (req, res) => {
     const body = parse(createSchema, req.body);
-    checkRefs(ctx, body);
+    await checkRefs(ctx, body);
     const now = ctx.nowIso();
-    const id = ctx.db.tx(() => {
-      const id = ctx.db.insert('expenses', { ...body, created_at: now, updated_at: now });
-      logActivity(ctx, actorOf(req), {
+    const id = await ctx.db.tx(async () => {
+      const id = await ctx.db.insert('expenses', { ...body, created_at: now, updated_at: now });
+      await logActivity(ctx, actorOf(req), {
         entity_type: 'expense',
         entity_id: id,
         client_id: body.client_id,
@@ -111,23 +111,23 @@ export function expensesRouter(ctx: AppContext): Router {
     res.status(201).json({ id });
   });
 
-  r.patch('/:id', (req, res) => {
+  r.patch('/:id', async (req, res) => {
     const id = idParam(req);
-    const existing = ctx.db.get<{ client_id: number | null; project_id: number | null }>('SELECT client_id, project_id FROM expenses WHERE id = :id', { id });
+    const existing = await ctx.db.get<{ client_id: number | null; project_id: number | null }>('SELECT client_id, project_id FROM expenses WHERE id = :id', { id });
     if (!existing) throw notFound('Expense');
     const body = parse(updateSchema, req.body);
-    checkRefs(ctx, { ...existing, ...body });
-    ctx.db.update('expenses', id, { ...body, updated_at: ctx.nowIso() });
+    await checkRefs(ctx, { ...existing, ...body });
+    await ctx.db.update('expenses', id, { ...body, updated_at: ctx.nowIso() });
     res.json({ ok: true });
   });
 
-  r.delete('/:id', (req, res) => {
+  r.delete('/:id', async (req, res) => {
     const id = idParam(req);
-    const e = ctx.db.get<{ description: string; amount_minor: number; currency: string }>('SELECT description, amount_minor, currency FROM expenses WHERE id = :id', { id });
+    const e = await ctx.db.get<{ description: string; amount_minor: number; currency: string }>('SELECT description, amount_minor, currency FROM expenses WHERE id = :id', { id });
     if (!e) throw notFound('Expense');
-    ctx.db.tx(() => {
-      ctx.db.run('DELETE FROM expenses WHERE id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'expense', entity_id: id, action: 'deleted', summary: `Expense deleted: ${e.description} · ${formatMoney(e.amount_minor, e.currency)}` });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('DELETE FROM expenses WHERE id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'expense', entity_id: id, action: 'deleted', summary: `Expense deleted: ${e.description} · ${formatMoney(e.amount_minor, e.currency)}` });
     });
     res.json({ ok: true });
   });

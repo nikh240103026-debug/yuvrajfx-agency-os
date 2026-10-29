@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { statSync, mkdirSync, rmSync } from 'node:fs';
-import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { AppContext } from '../context.ts';
 import { badRequest, conflict, forbidden, idParam, notFound, parse } from '../lib/http.ts';
+import { pgEnvFromUrl } from '../db/pg-env.ts';
 import { generatePassword, hashPassword } from '../lib/auth.ts';
 import { actorOf, logActivity } from '../lib/activity.ts';
 import { writeSettings, type Settings } from '../lib/settings.ts';
@@ -11,7 +11,6 @@ import { currencyCode, foreignKey, optionalDate, optionalEmail, optionalText, op
 import { isValidCurrency } from '../../shared/money.ts';
 import { isValidTimeZone } from '../../shared/dates.ts';
 import { demoCounts, loadDemoData, removeDemoData } from '../services/demo.ts';
-import { ROOT } from '../config.ts';
 
 const text = (max: number) => optionalText(max).transform((v) => v ?? '');
 
@@ -54,38 +53,31 @@ const userUpdate = z.object({ name: requiredText(120), role: z.enum(['admin', 'm
 export function settingsRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (_req, res) => {
-    let dbSize: number | null = null;
-    try {
-      dbSize = ctx.config.dbPath === ':memory:' ? null : statSync(ctx.config.dbPath).size;
-    } catch {
-      /* not created yet */
-    }
+  r.get('/', async (_req, res) => {
     res.json({
-      settings: ctx.settings(),
+      settings: await ctx.settings(),
       system: {
-        db_path: ctx.config.dbPath,
-        db_size: dbSize,
+        database: 'PostgreSQL',
         node: process.version,
         email: { configured: ctx.mailer.configured, description: ctx.mailer.description },
-        demo: demoCounts(ctx),
-        today: ctx.today(),
+        demo: await demoCounts(ctx),
+        today: await ctx.today(),
       },
     });
   });
 
-  r.put('/', (req, res) => {
+  r.put('/', async (req, res) => {
     const body = parse(settingsSchema, req.body);
-    writeSettings(ctx.db, body as Partial<Settings>);
+    await writeSettings(ctx.db, body as Partial<Settings>);
     ctx.invalidateSettings();
-    logActivity(ctx, actorOf(req), { entity_type: 'settings', entity_id: null, action: 'updated', summary: 'Business settings updated' });
-    res.json({ settings: ctx.settings() });
+    await logActivity(ctx, actorOf(req), { entity_type: 'settings', entity_id: null, action: 'updated', summary: 'Business settings updated' });
+    res.json({ settings: await ctx.settings() });
   });
 
   // ── Users & portal access ──
-  r.get('/users', (_req, res) => {
+  r.get('/users', async (_req, res) => {
     res.json({
-      users: ctx.db.all(
+      users: await ctx.db.all(
         `SELECT u.id, u.email, u.name, u.role, u.client_id, u.team_member_id, u.disabled, u.must_change_password, u.last_login_at, u.created_at,
                 COALESCE(c.company, c.name) AS client_name, t.name AS team_member_name
            FROM users u LEFT JOIN clients c ON c.id = u.client_id LEFT JOIN team_members t ON t.id = u.team_member_id
@@ -100,16 +92,16 @@ export function settingsRouter(ctx: AppContext): Router {
     if (body.role === 'admin' && req.user!.role !== 'owner') throw forbidden('Only the owner can add admins.');
     if (body.role === 'client') {
       if (!body.client_id) throw badRequest('Pick the client this portal login belongs to.');
-      const c = ctx.db.get<{ archived_at: string | null }>('SELECT archived_at FROM clients WHERE id = :id', { id: body.client_id });
+      const c = await ctx.db.get<{ archived_at: string | null }>('SELECT archived_at FROM clients WHERE id = :id', { id: body.client_id });
       if (!c) throw badRequest('That client does not exist.');
       if (c.archived_at) throw badRequest('That client is archived.');
     }
-    if (body.team_member_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.team_member_id })) throw badRequest('That team member does not exist.');
-    if (ctx.db.get('SELECT 1 FROM users WHERE email = :email', { email: body.email })) throw conflict('A login with that email already exists.');
+    if (body.team_member_id && !await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.team_member_id })) throw badRequest('That team member does not exist.');
+    if (await ctx.db.get('SELECT 1 FROM users WHERE email = :email', { email: body.email })) throw conflict('A login with that email already exists.');
     const temporary = generatePassword();
     const hash = await hashPassword(temporary);
     const now = ctx.nowIso();
-    const id = ctx.db.insert('users', {
+    const id = await ctx.db.insert('users', {
       name: body.name,
       email: body.email,
       role: body.role,
@@ -120,7 +112,7 @@ export function settingsRouter(ctx: AppContext): Router {
       created_at: now,
       updated_at: now,
     });
-    logActivity(ctx, actorOf(req), {
+    await logActivity(ctx, actorOf(req), {
       entity_type: 'user',
       entity_id: id,
       client_id: body.role === 'client' ? body.client_id : null,
@@ -130,75 +122,83 @@ export function settingsRouter(ctx: AppContext): Router {
     res.status(201).json({ id, temporary_password: temporary });
   });
 
-  r.patch('/users/:id', (req, res) => {
+  r.patch('/users/:id', async (req, res) => {
     const id = idParam(req);
-    const u = ctx.db.get<{ id: number; role: string; name: string }>('SELECT id, role, name FROM users WHERE id = :id', { id });
+    const u = await ctx.db.get<{ id: number; role: string; name: string }>('SELECT id, role, name FROM users WHERE id = :id', { id });
     if (!u) throw notFound('User');
     const body = parse(userUpdate, req.body);
     if (u.role === 'owner' && (body.role || body.disabled)) throw forbidden('The owner account cannot be demoted or disabled.');
     if (u.role === 'client' && body.role) throw badRequest('Portal logins cannot be turned into staff accounts.');
     if (id === req.user!.id && (body.role || body.disabled)) throw badRequest('You cannot change your own role or disable yourself.');
     if ((u.role === 'admin' || body.role === 'admin') && req.user!.role !== 'owner') throw forbidden('Only the owner can manage admins.');
-    ctx.db.tx(() => {
-      ctx.db.update('users', id, { ...body, disabled: body.disabled === undefined ? undefined : body.disabled ? 1 : 0, updated_at: ctx.nowIso() });
-      if (body.disabled) ctx.db.run('DELETE FROM sessions WHERE user_id = :id', { id });
+    await ctx.db.tx(async () => {
+      await ctx.db.update('users', id, { ...body, disabled: body.disabled === undefined ? undefined : body.disabled ? 1 : 0, updated_at: ctx.nowIso() });
+      if (body.disabled) await ctx.db.run('DELETE FROM sessions WHERE user_id = :id', { id });
     });
     res.json({ ok: true });
   });
 
   r.post('/users/:id/reset-password', async (req, res) => {
     const id = idParam(req);
-    const u = ctx.db.get<{ role: string; name: string; client_id: number | null }>('SELECT role, name, client_id FROM users WHERE id = :id', { id });
+    const u = await ctx.db.get<{ role: string; name: string; client_id: number | null }>('SELECT role, name, client_id FROM users WHERE id = :id', { id });
     if (!u) throw notFound('User');
     if (u.role === 'owner' && req.user!.id !== id) throw forbidden('Only the owner can reset the owner password.');
     if (u.role === 'admin' && req.user!.role !== 'owner') throw forbidden('Only the owner can reset an admin password.');
     const temporary = generatePassword();
     const hash = await hashPassword(temporary);
-    ctx.db.tx(() => {
-      ctx.db.run('UPDATE users SET password_hash = :hash, must_change_password = 1, updated_at = :now WHERE id = :id', { hash, now: ctx.nowIso(), id });
-      ctx.db.run('DELETE FROM sessions WHERE user_id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'user', entity_id: id, client_id: u.client_id, action: 'password_reset', summary: `Password reset for ${u.name}` });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('UPDATE users SET password_hash = :hash, must_change_password = 1, updated_at = :now WHERE id = :id', { hash, now: ctx.nowIso(), id });
+      await ctx.db.run('DELETE FROM sessions WHERE user_id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'user', entity_id: id, client_id: u.client_id, action: 'password_reset', summary: `Password reset for ${u.name}` });
     });
     res.json({ temporary_password: temporary });
   });
 
-  r.delete('/users/:id', (req, res) => {
+  r.delete('/users/:id', async (req, res) => {
     const id = idParam(req);
-    const u = ctx.db.get<{ role: string; name: string; client_id: number | null }>('SELECT role, name, client_id FROM users WHERE id = :id', { id });
+    const u = await ctx.db.get<{ role: string; name: string; client_id: number | null }>('SELECT role, name, client_id FROM users WHERE id = :id', { id });
     if (!u) throw notFound('User');
     if (u.role === 'owner') throw forbidden('The owner account cannot be deleted.');
     if (id === req.user!.id) throw badRequest('You cannot delete your own account.');
     if (u.role === 'admin' && req.user!.role !== 'owner') throw forbidden('Only the owner can remove admins.');
-    ctx.db.tx(() => {
-      ctx.db.run('DELETE FROM users WHERE id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'user', entity_id: id, client_id: u.client_id, action: 'deleted', summary: `Login removed for ${u.name}` });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('DELETE FROM users WHERE id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'user', entity_id: id, client_id: u.client_id, action: 'deleted', summary: `Login removed for ${u.name}` });
     });
     res.json({ ok: true });
   });
 
   // ── Demo data ──
-  r.post('/demo', (req, res) => {
-    if (demoCounts(ctx).total > 0) throw conflict('Demo data is already loaded.');
-    res.status(201).json({ loaded: loadDemoData(ctx, actorOf(req)) });
+  r.post('/demo', async (req, res) => {
+    if ((await demoCounts(ctx)).total > 0) throw conflict('Demo data is already loaded.');
+    res.status(201).json({ loaded: await loadDemoData(ctx, actorOf(req)) });
   });
 
-  r.delete('/demo', (req, res) => {
-    res.json({ removed: removeDemoData(ctx, actorOf(req)) });
+  r.delete('/demo', async (req, res) => {
+    res.json({ removed: await removeDemoData(ctx, actorOf(req)) });
   });
 
-  // ── Backup ──
-  r.get('/backup', (_req, res) => {
-    if (ctx.config.dbPath === ':memory:') throw badRequest('This instance runs on an in-memory database.');
-    const dir = path.join(ROOT, 'data', 'backups');
-    mkdirSync(dir, { recursive: true });
+  // ── PostgreSQL backup ──
+  r.get('/backup', async (_req, res) => {
+    const connectionString = ctx.config.databaseUrl;
+    if (!connectionString) throw badRequest('PostgreSQL is not configured.');
     const stamp = ctx.nowIso().replace(/[:.]/g, '-');
-    const file = path.join(dir, `agency-${stamp}.db`);
-    ctx.db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-    res.download(file, `yuvrajfx-agency-backup-${ctx.today()}.db`, (err) => {
-      if (err) console.error('[backup] download failed', err);
-      // The copy also stays in data/backups as a local restore point.
-      if (err) rmSync(file, { force: true });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="yuvrajfx-agency-${stamp}.dump"`);
+    const child = spawn('pg_dump', ['--format=custom', '--no-owner', '--no-privileges'], { env: pgEnvFromUrl(connectionString), stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    child.on('error', (error) => {
+      console.error('[backup] pg_dump unavailable or failed to start', error);
+      if (!res.headersSent) res.status(503).json({ error: { message: 'PostgreSQL backup utility (pg_dump) is not available on this host. Use your database provider’s backup/export feature.' } });
+      else res.destroy(error);
     });
+    child.on('close', (code) => {
+      if (code !== 0) console.error('[backup] pg_dump failed', stderr);
+      if (code !== 0 && !res.headersSent) res.status(500).json({ error: { message: 'PostgreSQL backup failed. Check server logs or use your provider’s backup feature.' } });
+    });
+    child.stdout.pipe(res);
   });
 
   return r;

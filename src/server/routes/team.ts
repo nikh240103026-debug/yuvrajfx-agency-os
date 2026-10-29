@@ -44,16 +44,16 @@ const updateSchema = z.object(teamFields).partial();
 const PALETTE = ['#9085e9', '#199e70', '#d95926', '#3987e5', '#c98500', '#d55181', '#e66767', '#7469b8'];
 
 /** Workload per team member: open deliverables/tasks and hours booked in the next 7 days vs weekly capacity. */
-export function teamWorkload(ctx: AppContext) {
-  const today = ctx.today();
+export async function teamWorkload(ctx: AppContext) {
+  const today = await ctx.today();
   const weekEnd = addDays(today, 6);
-  const members = ctx.db.all<Record<string, unknown> & { id: number; capacity_hours: number }>('SELECT * FROM team_members ORDER BY status, name COLLATE NOCASE');
-  const stats = ctx.db.all<{ assignee_id: number; open: number; overdue: number; due_week: number; in_review: number; hours_week: number; hours_open: number }>(
+  const members = await ctx.db.all<Record<string, unknown> & { id: number; capacity_hours: number }>('SELECT * FROM team_members ORDER BY status, lower(name)');
+  const stats = await ctx.db.all<{ assignee_id: number; open: number; overdue: number; due_week: number; in_review: number; hours_week: number; hours_open: number }>(
     `SELECT COALESCE(d.assignee_id, p.editor_id) AS assignee_id,
             COUNT(*) AS open,
-            SUM(d.deadline IS NOT NULL AND d.deadline < :today) AS overdue,
-            SUM(d.deadline BETWEEN :today AND :week_end) AS due_week,
-            SUM(d.status IN ('internal_review','client_review')) AS in_review,
+            COUNT(*) FILTER (WHERE d.deadline IS NOT NULL AND d.deadline < :today) AS overdue,
+            COUNT(*) FILTER (WHERE d.deadline BETWEEN :today AND :week_end) AS due_week,
+            COUNT(*) FILTER (WHERE d.status IN ('internal_review','client_review')) AS in_review,
             SUM(CASE WHEN d.deadline <= :week_end THEN COALESCE(d.estimated_hours, 0) ELSE 0 END) AS hours_week,
             SUM(COALESCE(d.estimated_hours, 0)) AS hours_open
        FROM deliverables d JOIN projects p ON p.id = d.project_id
@@ -61,12 +61,12 @@ export function teamWorkload(ctx: AppContext) {
       GROUP BY COALESCE(d.assignee_id, p.editor_id)`,
     { today, week_end: weekEnd },
   );
-  const tasks = ctx.db.all<{ assignee_id: number; open: number; overdue: number; due_today: number }>(
-    `SELECT assignee_id, COUNT(*) AS open, SUM(due_date < :today) AS overdue, SUM(due_date = :today) AS due_today
+  const tasks = await ctx.db.all<{ assignee_id: number; open: number; overdue: number; due_today: number }>(
+    `SELECT assignee_id, COUNT(*) AS open, COUNT(*) FILTER (WHERE due_date < :today) AS overdue, COUNT(*) FILTER (WHERE due_date = :today) AS due_today
        FROM tasks WHERE status IN ('todo','in_progress') AND assignee_id IS NOT NULL GROUP BY assignee_id`,
     { today },
   );
-  const projects = ctx.db.all<{ editor_id: number; n: number }>(
+  const projects = await ctx.db.all<{ editor_id: number; n: number }>(
     `SELECT editor_id, COUNT(*) AS n FROM projects
       WHERE editor_id IS NOT NULL AND archived_at IS NULL AND status IN ('backlog','editing','internal_review','client_review','revisions','approved')
       GROUP BY editor_id`,
@@ -97,9 +97,9 @@ export function teamWorkload(ctx: AppContext) {
 export function teamRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (req, res) => {
-    const rows = teamWorkload(ctx);
-    const unassigned = ctx.db.value<number>(
+  r.get('/', async (req, res) => {
+    const rows = await teamWorkload(ctx);
+    const unassigned = await ctx.db.value<number>(
       `SELECT COUNT(*) FROM deliverables d JOIN projects p ON p.id = d.project_id
         WHERE d.status <> 'delivered' AND d.assignee_id IS NULL AND p.editor_id IS NULL AND p.status NOT IN ('cancelled','on_hold')`,
     );
@@ -109,11 +109,11 @@ export function teamRouter(ctx: AppContext): Router {
     });
   });
 
-  r.get('/:id', (req, res) => {
+  r.get('/:id', async (req, res) => {
     const id = idParam(req);
-    const member = teamWorkload(ctx).find((m) => m.id === id);
+    const member = (await teamWorkload(ctx)).find((m) => m.id === id);
     if (!member) throw notFound('Team member');
-    const deliverables = ctx.db.all(
+    const deliverables = await ctx.db.all(
       `SELECT d.id, d.title, d.status, d.deadline, d.estimated_hours, d.revision_count, p.id AS project_id, p.name AS project_name,
               c.id AS client_id, COALESCE(c.company, c.name) AS client_name
          FROM deliverables d JOIN projects p ON p.id = d.project_id JOIN clients c ON c.id = p.client_id
@@ -121,18 +121,18 @@ export function teamRouter(ctx: AppContext): Router {
         ORDER BY COALESCE(d.deadline, '9999'), d.id`,
       { id },
     );
-    const tasks = ctx.db.all(
+    const tasks = await ctx.db.all(
       `SELECT id, title, status, priority, due_date FROM tasks WHERE assignee_id = :id AND status IN ('todo','in_progress') ORDER BY COALESCE(due_date,'9999'), id`,
       { id },
     );
     res.json({ member: canSeeFinance(req) ? member : stripFields(member, ['cost_rate_minor', 'cost_currency', 'cost_unit']), deliverables, tasks });
   });
 
-  r.post('/', requireAdmin, (req, res) => {
+  r.post('/', requireAdmin, async (req, res) => {
     const body = parse(createSchema, req.body);
     const now = ctx.nowIso();
-    const count = ctx.db.value<number>('SELECT COUNT(*) FROM team_members') ?? 0;
-    const id = ctx.db.insert('team_members', {
+    const count = await ctx.db.value<number>('SELECT COUNT(*) FROM team_members') ?? 0;
+    const id = await ctx.db.insert('team_members', {
       ...body,
       title: body.title ?? 'Editor',
       capacity_hours: body.capacity_hours ?? 40,
@@ -141,30 +141,30 @@ export function teamRouter(ctx: AppContext): Router {
       created_at: now,
       updated_at: now,
     });
-    logActivity(ctx, actorOf(req), { entity_type: 'team_member', entity_id: id, action: 'created', summary: `${body.name} added to the team` });
+    await logActivity(ctx, actorOf(req), { entity_type: 'team_member', entity_id: id, action: 'created', summary: `${body.name} added to the team` });
     res.status(201).json({ id });
   });
 
-  r.patch('/:id', requireAdmin, (req, res) => {
+  r.patch('/:id', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    if (!ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id })) throw notFound('Team member');
+    if (!await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id })) throw notFound('Team member');
     const body = parse(updateSchema, req.body);
-    ctx.db.update('team_members', id, { ...body, updated_at: ctx.nowIso() });
+    await ctx.db.update('team_members', id, { ...body, updated_at: ctx.nowIso() });
     res.json({ ok: true });
   });
 
-  r.delete('/:id', requireAdmin, (req, res) => {
+  r.delete('/:id', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const m = ctx.db.get<{ name: string }>('SELECT name FROM team_members WHERE id = :id', { id });
+    const m = await ctx.db.get<{ name: string }>('SELECT name FROM team_members WHERE id = :id', { id });
     if (!m) throw notFound('Team member');
-    const open = ctx.db.value<number>(
+    const open = await ctx.db.value<number>(
       `SELECT COUNT(*) FROM deliverables d JOIN projects p ON p.id = d.project_id WHERE d.status <> 'delivered' AND (d.assignee_id = :id OR p.editor_id = :id)`,
       { id },
     );
     if (open) throw conflict(`${m.name} still has ${open} open deliverable(s). Reassign them or mark the member inactive instead.`);
-    ctx.db.tx(() => {
-      ctx.db.run('DELETE FROM team_members WHERE id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'team_member', entity_id: id, action: 'deleted', summary: `${m.name} removed from the team` });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('DELETE FROM team_members WHERE id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'team_member', entity_id: id, action: 'deleted', summary: `${m.name} removed from the team` });
     });
     res.json({ ok: true });
   });

@@ -4,7 +4,7 @@ import { runAutomations } from '../src/server/services/automations.ts';
 
 describe('tasks', () => {
   test('today, overdue and upcoming views', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     ok(await api.post('/api/tasks', { title: 'Late', due_date: '2026-10-20', priority: 'high' }), 201);
     ok(await api.post('/api/tasks', { title: 'Today', due_date: '2026-10-27' }), 201);
@@ -21,7 +21,7 @@ describe('tasks', () => {
   });
 
   test('recurring tasks are generated once per occurrence; long gaps do not flood', async () => {
-    const { app, ctx, setNow } = makeApp({ now: '2026-10-27T06:30:00.000Z' });
+    const { app, ctx, setNow } = await makeApp({ now: '2026-10-27T06:30:00.000Z' });
     const api = await ownerClient(app);
     const rule = ok<{ id: number; generated: { tasks: number } }>(
       await api.post('/api/recurring', { kind: 'task', title: 'Send {{month}} retainer invoices', frequency: 'monthly', month_day: 1, start_date: '2026-10-27', lead_days: 5, template: { priority: 'high' } }),
@@ -31,20 +31,20 @@ describe('tasks', () => {
     expect(rule.generated.tasks).toBe(1);
     const titles = ok<{ tasks: { title: string; due_date: string; source: string }[] }>(await api.get('/api/tasks?view=all')).tasks;
     expect(titles).toEqual([expect.objectContaining({ title: 'Send November 2026 retainer invoices', due_date: '2026-11-01', source: 'recurring' })]);
-    runAutomations(ctx, 'manual');
-    runAutomations(ctx, 'manual');
+    await runAutomations(ctx, 'manual');
+    await runAutomations(ctx, 'manual');
     expect(ok<{ tasks: unknown[] }>(await api.get('/api/tasks?view=all')).tasks).toHaveLength(1);
 
     // Six months later: only the latest missed occurrence (plus the next one inside the lead window) appears.
     setNow('2027-04-29T06:30:00.000Z');
-    runAutomations(ctx, 'manual');
+    await runAutomations(ctx, 'manual');
     ok(await api.post('/api/auth/login', { email: OWNER.email, password: OWNER.password })); // the old session expired
     const later = ok<{ tasks: { title: string; due_date: string }[] }>(await api.get('/api/tasks?view=all')).tasks;
     expect(later.map((t) => t.due_date)).toEqual(['2026-11-01', '2027-04-01', '2027-05-01']);
   });
 
   test('recurring projects copy their template and deliverables', async () => {
-    const { app, ctx } = makeApp();
+    const { app, ctx } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     ok(
@@ -59,7 +59,7 @@ describe('tasks', () => {
       }),
       201,
     );
-    runAutomations(ctx, 'manual');
+    await runAutomations(ctx, 'manual');
     const projects = ok<{ projects: { id: number; name: string; deadline: string; deliverable_count: number }[] }>(await api.get('/api/projects')).projects;
     expect(projects).toEqual([expect.objectContaining({ name: 'October 2026 Shorts Pack', deadline: '2026-10-28', deliverable_count: 2 })]);
     const bad = await api.post('/api/recurring', { kind: 'project', title: 'X', frequency: 'monthly', start_date: '2026-10-01', template: { type: 'ad' } });
@@ -69,15 +69,15 @@ describe('tasks', () => {
 
 describe('automations', () => {
   test('overdue invoices: in-app alert + a reminder drafted for approval, never sent on its own', async () => {
-    const { app, ctx, mailer } = makeApp({ recordingMailer: true });
+    const { app, ctx, mailer } = await makeApp({ recordingMailer: true });
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const { id } = await createInvoice(api, cid, { issue_date: '2026-10-01', due_date: '2026-10-08' });
     ok(await api.post(`/api/invoices/${id}/send`));
-    const run = runAutomations(ctx, 'manual');
+    const run = await runAutomations(ctx, 'manual');
     expect(run.status).toBe('ok');
     expect((run.summary.overdue_invoice_reminders as Record<string, number>).reminders_drafted).toBe(1);
-    runAutomations(ctx, 'manual'); // idempotent
+    await runAutomations(ctx, 'manual'); // idempotent
 
     const notes = ok<{ notifications: { kind: string; title: string }[]; unread: number }>(await api.get('/api/notifications'));
     expect(notes.notifications.filter((n) => n.kind === 'invoice_overdue')).toHaveLength(1);
@@ -96,12 +96,12 @@ describe('automations', () => {
   });
 
   test('without SMTP the approval button refuses and offers the manual route', async () => {
-    const { app, ctx } = makeApp();
+    const { app, ctx } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const { id } = await createInvoice(api, cid);
     ok(await api.post(`/api/invoices/${id}/send`));
-    runAutomations(ctx, 'manual');
+    await runAutomations(ctx, 'manual');
     const msg = ok<{ messages: { id: number }[]; email: { configured: boolean } }>(await api.get('/api/outbox'));
     expect(msg.email.configured).toBe(false);
     const res = await api.post(`/api/outbox/${msg.messages[0].id}/approve-send`);
@@ -112,18 +112,18 @@ describe('automations', () => {
   });
 
   test('deadline, renewal and follow-up reminders; weekly and monthly snapshots once', async () => {
-    const { app, ctx } = makeApp();
+    const { app, ctx } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api, { renewal_date: '2026-11-05' });
     ok(await api.post('/api/projects', { client_id: cid, name: 'P', type: 'ad', deliverables: [{ title: 'Due tomorrow', deadline: '2026-10-28' }, { title: 'Overdue', deadline: '2026-10-25' }, { title: 'Far', deadline: '2026-12-01' }] }), 201);
     ok(await api.post('/api/leads', { name: 'Lead', currency: 'USD', next_follow_up: '2026-10-26' }), 201);
-    const run = runAutomations(ctx, 'manual');
+    const run = await runAutomations(ctx, 'manual');
     expect(run.summary.deadline_reminders).toMatchObject({ due_soon: 1, deliverables_overdue: 1 });
     expect(run.summary.renewal_reminders).toMatchObject({ renewals_notified: 1, tasks_created: 1 });
     expect(run.summary.follow_up_reminders).toMatchObject({ follow_ups_notified: 1 });
     expect(run.summary.weekly_report).toMatchObject({ snapshots: 1 });
     expect(run.summary.monthly_revenue_summary).toMatchObject({ snapshots: 1 });
-    const again = runAutomations(ctx, 'manual');
+    const again = await runAutomations(ctx, 'manual');
     expect(again.summary.weekly_report).toMatchObject({ snapshots: 0 });
     const snaps = ok<{ snapshots: { kind: string; period_start: string; period_end: string }[] }>(await api.get('/api/finance/snapshots')).snapshots;
     expect(snaps).toEqual(
@@ -134,6 +134,6 @@ describe('automations', () => {
     );
     // Disabled automations do nothing.
     ok(await api.patch('/api/automations/deadline_reminders', { enabled: false }));
-    expect(runAutomations(ctx, 'manual').summary.deadline_reminders).toBe('disabled');
+    expect(await runAutomations(ctx, 'manual').summary.deadline_reminders).toBe('disabled');
   });
 });

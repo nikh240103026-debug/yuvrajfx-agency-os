@@ -6,7 +6,7 @@ import {
   expect,
   it,
 } from 'vitest';
-import { PostgresDb } from '../src/server/db/postgres.ts';
+import { Db } from '../src/server/db/db.ts';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -21,10 +21,10 @@ if (connectionString) {
 }
 
 describe.skipIf(!connectionString)('PostgreSQL adapter integration', () => {
-  let db: PostgresDb;
+  let db: Db;
 
   beforeAll(() => {
-    db = new PostgresDb(connectionString!);
+    db = new Db(connectionString!);
   });
 
   afterAll(async () => {
@@ -78,7 +78,7 @@ describe.skipIf(!connectionString)('PostgreSQL adapter integration', () => {
       ).toBe(42);
 
       await expect(
-        db.tx(async () => {
+        await db.tx(async () => {
           await db.insert('adapter_probe', {
             name: 'must-rollback',
             active: true,

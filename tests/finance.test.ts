@@ -29,7 +29,7 @@ async function seed(api: Api) {
 
 describe('financial analytics', () => {
   test('cash collected, invoiced revenue, receivables and expenses are separate and per currency', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     await seed(api);
     const s = ok<{
@@ -79,7 +79,7 @@ describe('financial analytics', () => {
   });
 
   test('revenue by client, by service and by month', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const { usd } = await seed(api);
     const s = ok<{
@@ -104,7 +104,7 @@ describe('financial analytics', () => {
   });
 
   test('owner exchange rates give a labelled estimate; reports export to CSV', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     await seed(api);
     ok(await api.put('/api/settings', { fx_rates: { USD: 84 }, fx_as_of: '2026-10-01' }));
@@ -128,7 +128,7 @@ describe('financial analytics', () => {
   });
 
   test('dashboard metrics come from the data, per currency', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const empty = ok<{ has_any_data: boolean; finance: { collected_month: G; mrr: { groups: G } } }>(await api.get('/api/dashboard'));
     expect(empty.has_any_data).toBe(false);

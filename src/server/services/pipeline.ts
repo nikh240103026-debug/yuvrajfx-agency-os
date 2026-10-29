@@ -19,13 +19,13 @@ import {
 // ── Pipeline value & metrics ─────────────────────────────────────────────────
 
 /** Open pipeline value per currency: total estimated value and a probability-weighted forecast. */
-export function pipelineValue(ctx: AppContext) {
-  const rows = ctx.db.all<{ stage: LeadStage; deal_type: DealType; currency: string; total: number; n: number }>(
+export async function pipelineValue(ctx: AppContext) {
+  const rows = await ctx.db.all<{ stage: LeadStage; deal_type: DealType; currency: string; total: number; n: number }>(
     `SELECT stage, deal_type, currency, SUM(COALESCE(estimated_value_minor, 0)) AS total, COUNT(*) AS n
        FROM leads WHERE stage IN ('lead','contacted','replied','discovery_call','proposal_sent','negotiation')
       GROUP BY stage, deal_type, currency`,
   );
-  const base = ctx.settings().base_currency;
+  const base = (await ctx.settings()).base_currency;
   const weighted = rows.map((r) => ({ currency: r.currency, amount_minor: Math.round(r.total * LEAD_STAGE_PROBABILITY[r.stage]) }));
   return {
     open_count: rows.reduce((s, r) => s + r.n, 0),
@@ -44,12 +44,12 @@ export function pipelineValue(ctx: AppContext) {
 const FUNNEL: LeadStage[] = ['lead', 'contacted', 'replied', 'discovery_call', 'proposal_sent', 'negotiation', 'won'];
 const stageIndex = (s: string) => FUNNEL.indexOf(s as LeadStage);
 
-export function pipelineMetrics(ctx: AppContext, range: { from?: string; to?: string } = {}) {
-  const base = ctx.settings().base_currency;
-  const leads = ctx.db.all<{ id: number; stage: LeadStage; source: LeadSource; created_at: string; closed_at: string | null; outcome_reason: string | null; estimated_value_minor: number | null; currency: string }>(
+export async function pipelineMetrics(ctx: AppContext, range: { from?: string; to?: string } = {}) {
+  const base = (await ctx.settings()).base_currency;
+  const leads = await ctx.db.all<{ id: number; stage: LeadStage; source: LeadSource; created_at: string; closed_at: string | null; outcome_reason: string | null; estimated_value_minor: number | null; currency: string }>(
     'SELECT id, stage, source, created_at, closed_at, outcome_reason, estimated_value_minor, currency FROM leads',
   );
-  const history = ctx.db.all<{ lead_id: number; to_stage: string }>('SELECT lead_id, to_stage FROM lead_stage_history');
+  const history = await ctx.db.all<{ lead_id: number; to_stage: string }>('SELECT lead_id, to_stage FROM lead_stage_history');
   const maxReached = new Map<number, number>();
   for (const l of leads) maxReached.set(l.id, l.stage === 'lost' ? 0 : stageIndex(l.stage));
   for (const h of history) {
@@ -100,7 +100,7 @@ export function pipelineMetrics(ctx: AppContext, range: { from?: string; to?: st
 
   return {
     range,
-    value: pipelineValue(ctx),
+    value: await pipelineValue(ctx),
     funnel,
     conversions,
     won: won.length,
@@ -112,8 +112,8 @@ export function pipelineMetrics(ctx: AppContext, range: { from?: string; to?: st
     loss_reasons: reasons(lost),
     by_source: bySource,
     follow_ups: {
-      overdue: ctx.db.value<number>(`SELECT COUNT(*) FROM leads WHERE next_follow_up < :today AND stage NOT IN ('won','lost')`, { today: ctx.today() }) ?? 0,
-      today: ctx.db.value<number>(`SELECT COUNT(*) FROM leads WHERE next_follow_up = :today AND stage NOT IN ('won','lost')`, { today: ctx.today() }) ?? 0,
+      overdue: await ctx.db.value<number>(`SELECT COUNT(*) FROM leads WHERE next_follow_up < :today AND stage NOT IN ('won','lost')`, { today: await ctx.today() }) ?? 0,
+      today: await ctx.db.value<number>(`SELECT COUNT(*) FROM leads WHERE next_follow_up = :today AND stage NOT IN ('won','lost')`, { today: await ctx.today() }) ?? 0,
     },
   };
 }
@@ -172,11 +172,11 @@ const normName = (s: string | null | undefined) => (s ? s.trim().toLowerCase().r
 
 type Indexed = { type: 'lead' | 'client'; id: number; name: string; company: string | null; state: string; email: string | null; phone: string | null; website: string | null; social: string | null; company_n: string | null; name_n: string | null };
 
-function index(ctx: AppContext): Indexed[] {
-  const leads = ctx.db.all<{ id: number; name: string; company: string | null; stage: string; email: string | null; phone: string | null; website: string | null; social_url: string | null }>(
+async function index(ctx: AppContext): Promise<Indexed[]> {
+  const leads = await ctx.db.all<{ id: number; name: string; company: string | null; stage: string; email: string | null; phone: string | null; website: string | null; social_url: string | null }>(
     'SELECT id, name, company, stage, email, phone, website, social_url FROM leads',
   );
-  const clients = ctx.db.all<{ id: number; name: string; company: string | null; status: string; email: string | null; phone: string | null; whatsapp: string | null; website: string | null; socials: string }>(
+  const clients = await ctx.db.all<{ id: number; name: string; company: string | null; status: string; email: string | null; phone: string | null; whatsapp: string | null; website: string | null; socials: string }>(
     'SELECT id, name, company, status, email, phone, whatsapp, website, socials FROM clients',
   );
   return [
@@ -219,7 +219,7 @@ function index(ctx: AppContext): Indexed[] {
 }
 
 /** Find existing leads or clients that look like the same person or company. */
-export function findDuplicates(ctx: AppContext, c: DuplicateCandidate, opts: { excludeLeadId?: number; indexCache?: Indexed[] } = {}): DuplicateMatch[] {
+export async function findDuplicates(ctx: AppContext, c: DuplicateCandidate, opts: { excludeLeadId?: number; indexCache?: Indexed[] } = {}): Promise<DuplicateMatch[]> {
   const email = normEmail(c.email);
   const phone = normPhone(c.phone);
   const website = normDomain(c.website);
@@ -227,7 +227,7 @@ export function findDuplicates(ctx: AppContext, c: DuplicateCandidate, opts: { e
   const company = normCompany(c.company);
   const name = normName(c.name);
   const out = new Map<string, DuplicateMatch>();
-  for (const row of opts.indexCache ?? index(ctx)) {
+  for (const row of opts.indexCache ?? await index(ctx)) {
     if (row.type === 'lead' && row.id === opts.excludeLeadId) continue;
     const matched: DuplicateMatch['matched_on'] = [];
     if (email && row.email === email) matched.push('email');
@@ -322,12 +322,12 @@ export type ImportPreviewRow = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function previewLeadImport(ctx: AppContext, csvText: string, defaultCurrency: string): { headers: string[]; rows: ImportPreviewRow[]; recognized: string[] } {
+export async function previewLeadImport(ctx: AppContext, csvText: string, defaultCurrency: string): Promise<{ headers: string[]; rows: ImportPreviewRow[]; recognized: string[] }> {
   const { headers, rows } = parseCsvObjects(csvText);
   const recognized = Object.keys(ALIASES).filter((k) => ALIASES[k].some((a) => headers.includes(a)));
-  const idx = index(ctx);
+  const idx = await index(ctx);
   const seen = new Map<string, number>();
-  const out: ImportPreviewRow[] = rows.slice(0, 2000).map((raw, i) => {
+  const out: ImportPreviewRow[] = await Promise.all(rows.slice(0, 2000).map(async (raw, i) => {
     const errors: string[] = [];
     const warnings: string[] = [];
     let name = pick(raw, 'name');
@@ -385,7 +385,7 @@ export function previewLeadImport(ctx: AppContext, csvText: string, defaultCurre
     const lead: ImportLead | null = errors.length
       ? null
       : { name, company, email, phone: pick(raw, 'phone') || null, website, social_url: social, source, deal_type, estimated_value_minor: value, currency, stage, notes, next_follow_up, last_contact_at, tags };
-    const duplicates = lead ? findDuplicates(ctx, lead, { indexCache: idx }) : [];
+    const duplicates = lead ? await findDuplicates(ctx, lead, { indexCache: idx }) : [];
     let duplicate_in_file: number | null = null;
     if (lead) {
       const keys = [normEmail(lead.email), normDomain(lead.website), normCompany(lead.company)].filter(Boolean) as string[];
@@ -398,6 +398,6 @@ export function previewLeadImport(ctx: AppContext, csvText: string, defaultCurre
       for (const k of keys) if (!seen.has(k)) seen.set(k, i + 2);
     }
     return { row: i + 2, lead, errors, warnings, duplicates, duplicate_in_file };
-  });
+  }));
   return { headers, rows: out, recognized };
 }
