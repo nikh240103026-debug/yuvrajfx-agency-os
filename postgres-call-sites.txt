@@ -1,0 +1,383 @@
+﻿E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\db\migrations.ts:501: db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\db\migrations.ts:510: db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\db\migrations.ts:511: db.exec(m.sql);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\db\migrations.ts:512: db.run('INSERT INTO schema_migrations (version, name, applied_at) VALUES (:version, :name, :at)', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\activity.ts:26: ctx.db.insert('activity', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\auth.ts:121: ctx.db.insert('sessions', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\auth.ts:130: ctx.db.run('UPDATE users SET last_login_at = :at WHERE id = :id', { at: now.toISOString(), id: userId });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\auth.ts:141: if (req.sessionId) ctx.db.run('DELETE FROM sessions WHERE id = :id', { id: req.sessionId });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\auth.ts:165: const row = ctx.db.get<SessionRow>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\auth.ts:176: if (row) ctx.db.run('DELETE FROM sessions WHERE id = :id', { id: row.session_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\auth.ts:182: ctx.db.run('UPDATE sessions SET last_seen_at = :now, expires_at = :exp WHERE id = :id', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\settings.ts:67: db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\lib\settings.ts:70: db.run('INSERT INTO settings (key, value) VALUES (:key, :value) ON CONFLICT(key) DO UPDATE SET value = excluded.value', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:71: const users = ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:74: client = ctx.db.get('SELECT id, name, company FROM clients WHERE id = :id', { id: req.user.client_id }) ?? null;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:93: if ((ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0) > 0) throw conflict('Setup is already complete. Sign in instead.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:99: const id = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:100: if ((ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0) > 0) throw conflict('Setup is already complete. Sign in instead.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:108: return ctx.db.insert('users', { email: body.email, name: body.name, password_hash: hash, role: 'owner', created_at: now, updated_at: now });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:121: const user = ctx.db.get<UserRow & { client_archived: string | null }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:148: const user = ctx.db.get<UserRow>('SELECT * FROM users WHERE id = :id', { id: req.user!.id })!;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:156: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:157: ctx.db.run('UPDATE users SET password_hash = :hash, must_change_password = 0, updated_at = :at WHERE id = :id', { hash, at: ctx.nowIso(), id: user.id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\auth.ts:159: ctx.db.run('DELETE FROM sessions WHERE user_id = :id AND id <> :sid', { id: user.id, sid: req.sessionId ?? '' });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\automations.ts:23: pending_approval: ctx.db.value<number>(`SELECT COUNT(*) FROM outbox WHERE status = 'pending_approval'`) ?? 0,
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\automations.ts:59: const rows = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\automations.ts:71: const row = ctx.db.get<{ status: string }>('SELECT status FROM outbox WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\automations.ts:87: ctx.db.update('outbox', id, { ...body, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\automations.ts:105: const changes = ctx.db.run(`UPDATE outbox SET status = 'rejected', updated_at = :now WHERE id = :id AND status IN ('pending_approval','failed')`, { now: ctx.nowIso(), id }).changes;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:140: const rows = ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:156: const balances = ctx.db.all<{ client_id: number; currency: string; amount_minor: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:176: const tags = ctx.db.all<{ tag: string; count: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:216: const id = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:217: const id = ctx.db.insert('clients', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:233: const row = ctx.db.get<Record<string, unknown>>('SELECT * FROM clients WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:247: const deliverables = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:254: const portalUsers = ctx.db.all('SELECT id, email, name, disabled, last_login_at, must_change_password, created_at FROM users WHERE client_id = :id ORDER BY id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:255: const lead = ctx.db.get('SELECT id, name, source, closed_at FROM leads WHERE client_id = :id ORDER BY id DESC LIMIT 1', { id }) ?? null;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:259: const collectedRows = ctx.db.all<{ currency: string; amount_minor: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:283: const existing = ctx.db.get<{ id: number; status: string; name: string; company: string | null; retainer_minor: number | null; currency: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:289: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:290: ctx.db.update('clients', id, { ...body, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:308: const c = ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:310: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:311: ctx.db.run('UPDATE clients SET archived_at = :at, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:313: ctx.db.run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE client_id = :id)', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:321: const c = ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:323: ctx.db.run('UPDATE clients SET archived_at = NULL, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:331: const c = ctx.db.get<{ name: string; company: string | null }>('SELECT name, company FROM clients WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:333: const refs = ctx.db.get<{ p: number; i: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:338: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:339: ctx.db.run('DELETE FROM clients WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:347: if (!ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id })) throw notFound('Client');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:349: const activity = ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:355: const comms = ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:368: const c = ctx.db.get<{ name: string; company: string | null; is_demo: number }>('SELECT name, company, is_demo FROM clients WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:371: const commId = ctx.db.insert('communications', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\clients.ts:387: const changes = ctx.db.run('DELETE FROM communications WHERE id = :commId AND client_id = :id', { id, commId }).changes;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:31: if (b.client_id && !ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: b.client_id })) throw badRequest('That client does not exist.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:33: const p = ctx.db.get<{ client_id: number }>('SELECT client_id FROM projects WHERE id = :id', { id: b.project_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:37: if (b.team_member_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: b.team_member_id })) throw badRequest('That team member does not exist.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:64: return ctx.db.all<{ id: number; date: string; category: string; amount_minor: number; currency: string; description: string; vendor: string | null; client_name: string | null; project_name: string | null; member_name: string | null; receipt_url: string | null; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:99: const id = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:100: const id = ctx.db.insert('expenses', { ...body, created_at: now, updated_at: now });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:116: const existing = ctx.db.get<{ client_id: number | null; project_id: number | null }>('SELECT client_id, project_id FROM expenses WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:120: ctx.db.update('expenses', id, { ...body, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:126: const e = ctx.db.get<{ description: string; amount_minor: number; currency: string }>('SELECT description, amount_minor, currency FROM expenses WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:128: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\expenses.ts:129: ctx.db.run('DELETE FROM expenses WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\finance.ts:105: snapshots: ctx.db.all('SELECT id, kind, period_start, period_end, created_at, is_demo FROM report_snapshots ORDER BY period_start DESC, id DESC LIMIT 200'),
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\finance.ts:110: const row = ctx.db.get<{ id: number; kind: string; period_start: string; period_end: string; data: string; created_at: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\invoices.ts:280: return ctx.db.all<{ id: number; invoice_id: number; number: string; client_id: number; client_name: string; amount_minor: number; currency: string; paid_at: string; method: string; reference: string | null; notes: string | null; is_demo: number; recorded_by: string | null }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:75: ctx.db.run('UPDATE leads SET stage = :to, stage_changed_at = :now, closed_at = :closed, updated_at = :now WHERE id = :id', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:81: ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: from, to_stage: to, changed_at: now });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:204: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:211: const id = ctx.db.insert('leads', { ...row.lead, stage_changed_at: now, closed_at: row.lead.stage === 'won' || row.lead.stage === 'lost' ? now : null, created_at: now, updated_at: now });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:212: ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: null, to_stage: row.lead.stage, changed_at: now });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:227: const id = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:228: const id = ctx.db.insert('leads', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:238: ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: null, to_stage: stage, changed_at: now });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:252: const row = ctx.db.get<Record<string, unknown>>('SELECT * FROM leads WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:255: const outreach = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:260: const history = ctx.db.all('SELECT * FROM lead_stage_history WHERE lead_id = :id ORDER BY changed_at, id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:262: const client = lead.client_id ? ctx.db.get('SELECT id, name, company FROM clients WHERE id = :id', { id: lead.client_id }) : null;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:268: const existing = ctx.db.get<{ stage: LeadStage; name: string; company: string | null; is_demo: number }>('SELECT stage, name, company, is_demo FROM leads WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:272: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:273: if (Object.keys(rest).length) ctx.db.update('leads', id, { ...rest, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:281: const l = ctx.db.get<{ name: string }>('SELECT name FROM leads WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:283: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:284: ctx.db.run('DELETE FROM leads WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:293: const lead = ctx.db.get<{ stage: LeadStage; name: string; company: string | null; last_contact_at: string | null; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:300: const commId = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:301: const commId = ctx.db.insert('communications', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:314: ctx.db.update('leads', id, patch);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:326: const changes = ctx.db.run('DELETE FROM communications WHERE id = :commId AND lead_id = :id', { id: idParam(req), commId: idParam(req, 'commId') }).changes;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:334: const lead = ctx.db.get<{ id: number; name: string; company: string | null; email: string | null; phone: string | null; website: string | null; social_url: string | null; deal_type: string; estimated_value_minor: number | null; currency: string; stage: LeadStage; client_id: number | null; notes: string | null; tags: string; is_demo: number; outcome_reason: string | null }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:339: if (lead.client_id && ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: lead.client_id })) throw conflict('This lead is already linked to a client.', { client_id: lead.client_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:342: const clientId = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:349: const clientId = ctx.db.insert('clients', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:368: ctx.db.run('UPDATE leads SET client_id = :cid, outcome_reason = COALESCE(:reason, outcome_reason), updated_at = :now WHERE id = :id', { cid: clientId, reason: body.outcome_reason, now, id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\leads.ts:369: ctx.db.run('UPDATE communications SET client_id = :cid WHERE lead_id = :id', { cid: clientId, id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:63: const d = ctx.db.get<SafeDeliverable & { project_name: string; client_id: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:81: const client = ctx.db.get('SELECT id, name, company, service_package FROM clients WHERE id = :cid', { cid });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:82: const counts = ctx.db.get(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:95: const projects = ctx.db.all<{ id: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:110: const project = ctx.db.get(`SELECT p.id, p.name, p.type, p.status, p.start_date, p.deadline FROM projects p WHERE p.id = :id AND ${PROJECT_SCOPE}`, { id, cid });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:119: const feedback = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:131: const fid = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:132: const fid = ctx.db.insert('feedback', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:165: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:167: const fid = ctx.db.insert('feedback', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:197: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\portal.ts:199: const fid = ctx.db.insert('feedback', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:114: if (body.client_id && !ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: body.client_id })) throw badRequest('Pick an existing client.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:115: if (body.editor_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.editor_id })) throw badRequest('That editor is not on the team.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:220: return ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:241: return ctx.db.insert('deliverables', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:291: const client = ctx.db.get<{ currency: string; archived_at: string | null; is_demo: number }>('SELECT currency, archived_at, is_demo FROM clients WHERE id = :id', { id: body.client_id })!;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:294: for (const d of deliverables ?? []) if (d.assignee_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: d.assignee_id })) throw badRequest('A deliverable is assigned to someone not on the team.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:296: const id = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:297: const id = ctx.db.insert('projects', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:324: const row = ctx.db.get<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:334: const feedback = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:339: const activity = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:345: const tasks = ctx.db.all(`SELECT id, title, status, priority, due_date FROM tasks WHERE project_id = :id ORDER BY status = 'done', COALESCE(due_date,'9999'), id`, { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:359: const existing = ctx.db.get<{ status: string; name: string; client_id: number; start_date: string | null; deadline: string | null }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:367: if (ctx.db.get('SELECT 1 FROM invoices WHERE project_id = :id', { id })) throw conflict('This project is already invoiced; it cannot move to another client.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:370: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:371: ctx.db.update('projects', id, { ...rest, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:389: const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:391: ctx.db.run('UPDATE projects SET archived_at = :at, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:398: const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:400: ctx.db.run('UPDATE projects SET archived_at = NULL, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:407: const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:409: if (ctx.db.get('SELECT 1 FROM invoices WHERE project_id = :id', { id })) throw conflict('This project has invoices. Archive it instead, so your financial history stays intact.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:410: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:411: ctx.db.run('DELETE FROM projects WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:419: const p = ctx.db.get<{ name: string; client_id: number; is_demo: number }>('SELECT name, client_id, is_demo FROM projects WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:423: for (const d of items) if (d.assignee_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: d.assignee_id })) throw badRequest('That assignee is not on the team.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:424: const ids = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:425: const base = (ctx.db.value<number>('SELECT COALESCE(MAX(sort_order), -1) FROM deliverables WHERE project_id = :id', { id }) ?? -1) + 1;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:436: const status = ctx.db.value<string>('SELECT status FROM projects WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:445: const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:450: const d = ctx.db.get<{ project_id: number; title: string }>('SELECT project_id, title FROM deliverables WHERE id = :id', { id: body.deliverable_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:455: const fid = ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:461: const fid = ctx.db.insert('feedback', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:540: const existing = ctx.db.get<{ project_id: number; title: string; client_id: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:546: if (body.assignee_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.assignee_id })) throw badRequest('That assignee is not on the team.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:549: if (!ctx.db.get('SELECT 1 FROM projects WHERE id = :id', { id: body.project_id })) throw badRequest('That project does not exist.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:552: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:554: ctx.db.update('deliverables', id, { ...rest, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:575: const d = ctx.db.get<{ title: string; project_id: number; client_id: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:580: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:581: ctx.db.run('DELETE FROM deliverables WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:595: const changes = ctx.db.run('UPDATE feedback SET resolved_at = :at WHERE id = :id', { at: body.resolved ? ctx.nowIso() : null, id }).changes;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:601: const f = ctx.db.get<{ author_type: string }>('SELECT author_type FROM feedback WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\projects.ts:604: ctx.db.run('DELETE FROM feedback WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:88: users: ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:103: const c = ctx.db.get<{ archived_at: string | null }>('SELECT archived_at FROM clients WHERE id = :id', { id: body.client_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:107: if (body.team_member_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.team_member_id })) throw badRequest('That team member does not exist.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:108: if (ctx.db.get('SELECT 1 FROM users WHERE email = :email', { email: body.email })) throw conflict('A login with that email already exists.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:112: const id = ctx.db.insert('users', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:135: const u = ctx.db.get<{ id: number; role: string; name: string }>('SELECT id, role, name FROM users WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:142: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:143: ctx.db.update('users', id, { ...body, disabled: body.disabled === undefined ? undefined : body.disabled ? 1 : 0, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:144: if (body.disabled) ctx.db.run('DELETE FROM sessions WHERE user_id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:151: const u = ctx.db.get<{ role: string; name: string; client_id: number | null }>('SELECT role, name, client_id FROM users WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:157: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:158: ctx.db.run('UPDATE users SET password_hash = :hash, must_change_password = 1, updated_at = :now WHERE id = :id', { hash, now: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:159: ctx.db.run('DELETE FROM sessions WHERE user_id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:167: const u = ctx.db.get<{ role: string; name: string; client_id: number | null }>('SELECT role, name, client_id FROM users WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:172: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:173: ctx.db.run('DELETE FROM users WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\settings.ts:196: ctx.db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:39: if (id && !ctx.db.get(`SELECT 1 FROM ${table} WHERE id = :id`, { id })) throw badRequest(`That ${label} does not exist.`);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:80: return ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:104: const counts = ctx.db.get(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:138: const id = ctx.db.insert('tasks', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:152: const existing = ctx.db.get<{ status: string; title: string; client_id: number | null; project_id: number | null; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:162: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:163: ctx.db.update('tasks', id, patch);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:180: const changes = ctx.db.run('DELETE FROM tasks WHERE id = :id', { id: idParam(req) }).changes;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:248: const rules = ctx.db.all<Record<string, unknown> & { id: number; template: string }>('SELECT * FROM recurring_rules ORDER BY active DESC, next_occurrence, id');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:254: generated: ctx.db.value<number>(`SELECT (SELECT COUNT(*) FROM tasks WHERE recurring_rule_id = :id) + (SELECT COUNT(*) FROM projects WHERE recurring_rule_id = :id)`, { id: rule.id }) ?? 0,
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:265: const id = ctx.db.insert('recurring_rules', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:282: const existing = ctx.db.get<Record<string, unknown> & { kind: string; frequency: string; interval: number; weekday: number | null; month_day: number | null; start_date: string; next_occurrence: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:305: ctx.db.update('recurring_rules', id, patch);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:311: if (!ctx.db.get('SELECT 1 FROM recurring_rules WHERE id = :id', { id })) throw notFound('Recurring rule');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\tasks.ts:317: const changes = ctx.db.run('DELETE FROM recurring_rules WHERE id = :id', { id }).changes;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:50: const members = ctx.db.all<Record<string, unknown> & { id: number; capacity_hours: number }>('SELECT * FROM team_members ORDER BY status, name COLLATE NOCASE');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:51: const stats = ctx.db.all<{ assignee_id: number; open: number; overdue: number; due_week: number; in_review: number; hours_week: number; hours_open: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:64: const tasks = ctx.db.all<{ assignee_id: number; open: number; overdue: number; due_today: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:69: const projects = ctx.db.all<{ editor_id: number; n: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:102: const unassigned = ctx.db.value<number>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:116: const deliverables = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:124: const tasks = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:134: const count = ctx.db.value<number>('SELECT COUNT(*) FROM team_members') ?? 0;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:135: const id = ctx.db.insert('team_members', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:150: if (!ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id })) throw notFound('Team member');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:152: ctx.db.update('team_members', id, { ...body, updated_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:158: const m = ctx.db.get<{ name: string }>('SELECT name FROM team_members WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:160: const open = ctx.db.value<number>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:165: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\team.ts:166: ctx.db.run('DELETE FROM team_members WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:63: res.json({ items: ctx.db.all(`SELECT * FROM activity WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT :limit`, params) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:77: for (const c of ctx.db.all<{ id: number; name: string; company: string | null; status: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:82: for (const p of ctx.db.all<{ id: number; name: string; client: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:88: for (const d of ctx.db.all<{ id: number; title: string; project_id: number; project: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:94: for (const t of ctx.db.all<{ id: number; title: string; status: string }>(`SELECT id, title, status FROM tasks WHERE title LIKE :q ORDER BY status = 'done', id DESC LIMIT 5`, { q: like }))
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:97: for (const i of ctx.db.all<{ id: number; number: string; client: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:102: for (const l of ctx.db.all<{ id: number; name: string; company: string | null; stage: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:126: for (const d of ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:137: for (const p of ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:147: for (const t of ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:156: for (const i of ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:166: for (const c of ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\routes\workspace.ts:173: for (const l of ctx.db.all<Record<string, unknown>>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:84: const row = ctx.db.get<{ enabled: number; config: string }>('SELECT enabled, config FROM automation_settings WHERE key = :key', { key });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:90: const row = ctx.db.get<{ last_run_at: string | null; last_result: string | null }>('SELECT last_run_at, last_result FROM automation_settings WHERE key = :key', { key: a.key });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:100: ctx.db.run(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:160: const r = ctx.db.run(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:185: const r = ctx.db.run(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:210: upcoming_deadlines: ctx.db.value<number>(`SELECT COUNT(*) FROM deliverables WHERE status <> 'delivered' AND deadline BETWEEN :a AND :b`, { a: addDays(to, 1), b: addDays(to, 7) }) ?? 0,
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:235: if (ctx.db.get('SELECT 1 FROM report_snapshots WHERE kind = :kind AND period_start = :from', { kind, from })) return { created: false, id: null, data: null };
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:238: const id = ctx.db.insert('report_snapshots', { kind, period_start: from, period_end: to, data, is_demo: demoPresent(ctx) ? 1 : 0, created_at: ctx.nowIso() });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:252: const due = ctx.db.all<{ id: number; title: string; deadline: string; project_id: number; project_name: string; client_name: string; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:275: const tasks = ctx.db.all<{ id: number; title: string; due_date: string; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:304: const rows = ctx.db.all<{ id: number; number: string; due_date: string; balance_minor: number; currency: string; client_name: string; client_id: number; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:332: const already = ctx.db.get(`SELECT 1 FROM outbox WHERE entity_type = 'invoice' AND entity_id = :id AND status = 'pending_approval'`, { id: inv.id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:342: const rows = ctx.db.all<{ id: number; name: string; company: string | null; renewal_date: string; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:368: if (!ctx.db.get('SELECT 1 FROM tasks WHERE recurrence_key = :key', { key })) {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:369: ctx.db.insert('tasks', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:392: const rows = ctx.db.all<{ id: number; name: string; company: string | null; next_follow_up: string; stage: string; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:473: const runId = ctx.db.insert('automation_runs', { trigger, started_at: started, status: 'running', summary: {} });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:479: if (!ctx.db.get('SELECT 1 FROM users LIMIT 1')) {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:515: ctx.db.run(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:530: ctx.db.run('UPDATE automation_runs SET finished_at = :at, status = :status, summary = :summary, error = :error WHERE id = :id', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:566: const row = ctx.db.get<OutboxRow>('SELECT * FROM outbox WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:571: ctx.db.run(`UPDATE outbox SET approved_by = :uid, approved_at = :now, updated_at = :now WHERE id = :id`, { uid: actor.id, now, id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:574: ctx.db.run(`UPDATE outbox SET status = 'sent', sent_at = :now, error = NULL, updated_at = :now WHERE id = :id`, { now: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:577: const inv = ctx.db.get<{ state: string }>('SELECT state FROM invoices WHERE id = :id', { id: row.entity_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:578: if (inv?.state === 'draft') ctx.db.run(`UPDATE invoices SET state = 'sent', sent_at = :now, updated_at = :now WHERE id = :id`, { now: ctx.nowIso(), id: row.entity_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:583: ctx.db.run(`UPDATE outbox SET status = 'failed', error = :err, updated_at = :now WHERE id = :id`, { err: msg.slice(0, 1000), now: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:589: const row = ctx.db.get<OutboxRow>('SELECT * FROM outbox WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\automations.ts:593: ctx.db.run(`UPDATE outbox SET status = 'sent_manually', approved_by = :uid, approved_at = :now, sent_at = :now, updated_at = :now WHERE id = :id`, { uid: actor.id, now, id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:27: const n = (sql: string, params: Record<string, unknown> = {}) => ctx.db.value<number>(sql, { today, ...params }) ?? 0;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:50: const stageCounts = ctx.db.all<{ status: string; n: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:59: const due_soon = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:70: const recent_activity = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:78: for (const d of ctx.db.all<{ id: number; title: string; deadline: string; project_id: number; client_name: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:95: for (const f of ctx.db.all<{ id: number; project_id: number; deliverable_title: string | null; client_name: string; kind: string; created_at: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:110: for (const t of ctx.db.all<{ id: number; title: string; due_date: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:128: for (const inv of ctx.db.all<{ id: number; number: string; due_date: string; balance_minor: number; currency: string; client_name: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:143: for (const l of ctx.db.all<{ id: number; name: string; company: string | null; next_follow_up: string; stage: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\dashboard.ts:156: for (const c of ctx.db.all<{ id: number; name: string; company: string | null; renewal_date: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:19: counts[t] = ctx.db.value<number>(`SELECT COUNT(*) FROM ${t} WHERE is_demo = 1`) ?? 0;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:26: return !!ctx.db.get('SELECT 1 FROM clients WHERE is_demo = 1 UNION ALL SELECT 1 FROM leads WHERE is_demo = 1 LIMIT 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:36: db.insert('activity', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:52: return db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:55: db.insert('team_members', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:90: id: db.insert('clients', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:122: const id = db.insert('projects', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:146: return db.insert('deliverables', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:239: db.insert('feedback', { project_id: proj.id, deliverable_id: deliverable, kind, author_type: author, author_name: name, body, visible_to_client: kind === 'internal_note' ? 0 : 1, ...extra, ...D, created_at: ts(addDays(today, -daysAgo), 9 + (daysAgo % 8)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:259: if (!db.get('SELECT 1 FROM invoices WHERE number = :n', { n })) return n;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:268: const id = db.insert('invoices', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:292: i.items.forEach((it, idx) => db.insert('invoice_items', { invoice_id: id, ...it, amount_minor: totals.lines[idx].amount_minor, sort_order: idx }));
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:299: db.insert('payments', { invoice_id: id, client_id: i.client.id, amount_minor: amount, currency: i.client.currency, paid_at: paidAt, method: p.method, reference: p.reference ?? null, ...D, created_at: ts(paidAt, 15) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:333: if (seq > settingsSeq) db.run(`INSERT INTO settings (key, value) VALUES ('invoice_next_number', :v) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, { v: JSON.stringify(seq) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:338: date <= today && db.insert('expenses', { date, category, amount_minor: amount, currency, description, vendor, ...extra, ...D, created_at: ts(date, 18), updated_at: ts(date, 18) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:373: const id = db.insert('leads', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:399: db.insert('lead_stage_history', { lead_id: id, from_stage: prev, to_stage: order[i], changed_at: ts(addDays(created, Math.round((i * l.createdAgo) / (reached + 2)))) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:402: if (l.stage === 'lost') db.insert('lead_stage_history', { lead_id: id, from_stage: prev, to_stage: 'lost', changed_at: ts(closed!) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:404: db.insert('communications', { lead_id: id, client_id: l.client ?? null, channel: l.source === 'cold_dm' || l.source === 'instagram' ? 'dm' : 'email', direction: 'outbound', subject: 'Intro + 2 sample edits', body: `Shared two sample edits relevant to ${l.company}.`, occurred_at: addDays(created, 1), created_by: actor.id, ...D, created_at: ts(addDays(created, 1)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:406: db.insert('communications', { lead_id: id, client_id: l.client ?? null, channel: 'email', direction: 'inbound', subject: 'Re: Intro', body: 'Interested — can we hop on a call this week?', occurred_at: addDays(created, 3), created_by: actor.id, ...D, created_at: ts(addDays(created, 3)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:408: db.insert('communications', { lead_id: id, client_id: l.client ?? null, channel: 'call', direction: 'outbound', subject: 'Discovery call', body: 'Covered goals, posting cadence, budget and review process.', occurred_at: addDays(created, 6), created_by: actor.id, ...D, created_at: ts(addDays(created, 6)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:415: db.insert('communications', { client_id: c.id, channel, direction, subject, body, occurred_at: addDays(today, -daysAgo), created_by: actor.id, ...D, created_at: ts(addDays(today, -daysAgo)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:424: db.insert('tasks', { title, due_date: due === null ? null : addDays(today, due), priority, status: 'todo', source: 'manual', ...extra, ...D, created_at: ts(addDays(today, -3)), updated_at: ts(addDays(today, -3)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:432: db.insert('tasks', { title: 'Export Episode 40 final + chapters', status: 'done', priority: 'high', due_date: addDays(today, -9), completed_at: ts(addDays(today, -9)), client_id: atlas.id, project_id: atlas40.id, assignee_id: kabir, source: 'manual', ...D, created_at: ts(addDays(today, -12)), updated_at: ts(addDays(today, -9)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:433: db.insert('tasks', { title: 'Onboarding call with Copperleaf', status: 'done', priority: 'medium', due_date: addDays(today, -5), completed_at: ts(addDays(today, -5)), client_id: copperleaf.id, source: 'manual', ...D, created_at: ts(addDays(today, -8)), updated_at: ts(addDays(today, -5)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:437: return db.insert('recurring_rules', { ...r, interval: 1, next_occurrence: firstOccurrence(shape), active: 1, ...D, created_at: ts(addDays(today, -30)), updated_at: ts(addDays(today, -30)) });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:479: db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:480: db.run('DELETE FROM payments WHERE is_demo = 1 OR invoice_id IN (SELECT id FROM invoices WHERE is_demo = 1)');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:481: db.run('DELETE FROM outbox WHERE is_demo = 1 OR client_id IN (SELECT id FROM clients WHERE is_demo = 1)');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:482: db.run('DELETE FROM invoices WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:483: db.run('DELETE FROM tasks WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:484: db.run('DELETE FROM expenses WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:485: db.run('DELETE FROM projects WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:486: db.run('DELETE FROM communications WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:487: db.run('DELETE FROM leads WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:488: db.run('DELETE FROM clients WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:489: db.run('DELETE FROM recurring_rules WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:490: db.run('DELETE FROM team_members WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:491: db.run('DELETE FROM notifications WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:492: db.run('DELETE FROM report_snapshots WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\demo.ts:493: db.run('DELETE FROM activity WHERE is_demo = 1');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:29: ctx.db.all<CurRow>('SELECT currency, SUM(amount_minor) AS amount_minor FROM payments WHERE paid_at BETWEEN :from AND :to GROUP BY currency', { from, to }),
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:34: const rows = ctx.db.all<{ currency: string; net: number; tax: number; gross: number; n: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:50: ctx.db.all<CurRow>('SELECT currency, SUM(amount_minor) AS amount_minor FROM expenses WHERE date BETWEEN :from AND :to GROUP BY currency', { from, to }),
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:55: const rows = ctx.db.all<{ category: string; currency: string; amount_minor: number; n: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:72: const rows = ctx.db.all<{ id: number; currency: string; balance_minor: number; due_date: string; status: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:101: const rows = ctx.db.all<{ id: number; name: string; company: string | null; retainer_minor: number; currency: string; billing_cycle: BillingCycle }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:132: const rows = ctx.db.all<LineRow>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:147: const issued = ctx.db.all<{ id: number }>(`SELECT id FROM invoices WHERE state = 'sent' AND issue_date BETWEEN :from AND :to`, { from, to }).map((r) => r.id);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:148: const pays = ctx.db.all<{ invoice_id: number; amount_minor: number; currency: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:173: const cash = ctx.db.all<{ client_id: number; currency: string; amount_minor: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:177: const inv = ctx.db.all<{ client_id: number; currency: string; amount_minor: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:204: const q = (sql: string) => ctx.db.all<{ m: string; currency: string; amount_minor: number }>(sql, { from, to });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:242: payments_count: ctx.db.value<number>('SELECT COUNT(*) FROM payments WHERE paid_at BETWEEN :from AND :to', { from, to }) ?? 0,
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\finance.ts:248: const n = (sql: string) => ctx.db.value<number>(sql, { from, to }) ?? 0;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:114: const rows = ctx.db.all<InvoiceListRow>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:153: const inv = ctx.db.get<InvoiceRow>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:158: const items = ctx.db.all<{ id: number; description: string; quantity: number; unit_price_minor: number; amount_minor: number; service_type: string; sort_order: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:162: const payments = ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:168: const client = ctx.db.get(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:172: const project = inv.project_id ? ctx.db.get('SELECT id, name, type FROM projects WHERE id = :id', { id: inv.project_id }) : null;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:199: if (!ctx.db.get('SELECT 1 FROM invoices WHERE number = :number', { number })) return { number, seq };
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:209: const client = ctx.db.get<{ id: number; archived_at: string | null }>('SELECT id, archived_at FROM clients WHERE id = :id', { id: input.client_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:212: const project = ctx.db.get<{ client_id: number }>('SELECT client_id FROM projects WHERE id = :id', { id: input.project_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:224: ctx.db.run('DELETE FROM invoice_items WHERE invoice_id = :id', { id: invoiceId });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:226: ctx.db.insert('invoice_items', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:241: return ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:248: id = ctx.db.insert('invoices', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:297: const existing = ctx.db.get<{ id: number; state: string; number: string; client_id: number }>('SELECT id, state, number, client_id FROM invoices WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:302: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:304: ctx.db.update('invoices', id, {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:344: const inv = ctx.db.get<{ state: string; number: string; client_id: number; project_id: number | null; total_minor: number; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:351: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:352: ctx.db.run('UPDATE invoices SET state = :state, sent_at = :at, updated_at = :at WHERE id = :id', { state: 'sent', at: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:366: const inv = ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:369: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:371: ctx.db.run(`UPDATE invoices SET state = 'draft', sent_at = NULL, updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:380: const inv = ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:383: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:385: ctx.db.run(`UPDATE invoices SET state = 'void', voided_at = :at, void_reason = :reason, updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), reason, id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:394: const inv = ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:397: if (ctx.db.get('SELECT 1 FROM payments WHERE invoice_id = :id', { id })) throw conflict('This draft has payments recorded.');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:398: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:399: ctx.db.run('DELETE FROM invoices WHERE id = :id', { id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:445: const inv = ctx.db.get<{ id: number; number: string; state: string; currency: string; client_id: number; project_id: number | null; total_minor: number; paid_minor: number; balance_minor: number; issue_date: string; is_demo: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:459: return ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:461: ctx.db.run(`UPDATE invoices SET state = 'sent', sent_at = COALESCE(sent_at, :at), updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), id: invoiceId });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:473: id = ctx.db.insert('payments', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:489: const after = ctx.db.get<{ status: InvoiceStatus; balance_minor: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:508: const p = ctx.db.get<{ id: number; invoice_id: number; amount_minor: number; currency: string; client_id: number; number: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:513: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:514: ctx.db.run('DELETE FROM payments WHERE id = :id', { id: paymentId });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:548: const clients = ctx.db.all<RetainerClient>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:560: const existing = ctx.db.get<{ id: number; number: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:584: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\invoices.ts:586: const c = ctx.db.get<RetainerClient>('SELECT * FROM clients WHERE id = :id', { id: p.client_id })!;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\notifications.ts:21: const r = ctx.db.run(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\notifications.ts:45: return ctx.db.all(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\notifications.ts:56: ctx.db.value<number>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\notifications.ts:67: return ctx.db.run(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\notifications.ts:74: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\notifications.ts:76: n += ctx.db.run(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\pipeline.ts:23: const rows = ctx.db.all<{ stage: LeadStage; deal_type: DealType; currency: string; total: number; n: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\pipeline.ts:49: const leads = ctx.db.all<{ id: number; stage: LeadStage; source: LeadSource; created_at: string; closed_at: string | null; outcome_reason: string | null; estimated_value_minor: number | null; currency: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\pipeline.ts:52: const history = ctx.db.all<{ lead_id: number; to_stage: string }>('SELECT lead_id, to_stage FROM lead_stage_history');
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\pipeline.ts:115: overdue: ctx.db.value<number>(`SELECT COUNT(*) FROM leads WHERE next_follow_up < :today AND stage NOT IN ('won','lost')`, { today: ctx.today() }) ?? 0,
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\pipeline.ts:116: today: ctx.db.value<number>(`SELECT COUNT(*) FROM leads WHERE next_follow_up = :today AND stage NOT IN ('won','lost')`, { today: ctx.today() }) ?? 0,
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\pipeline.ts:176: const leads = ctx.db.all<{ id: number; name: string; company: string | null; stage: string; email: string | null; phone: string | null; website: string | null; social_url: string | null }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\pipeline.ts:179: const clients = ctx.db.all<{ id: number; name: string; company: string | null; status: string; email: string | null; phone: string | null; whatsapp: string | null; website: string | null; socials: string }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:33: const d = ctx.db.get<DeliverableRow>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:42: return ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:46: ctx.db.update('deliverables', id, { status: next, revision_count, approved_at, delivered_at, updated_at: now });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:63: const p = ctx.db.get<{ status: ProjectStatus; name: string; client_id: number; is_demo: number }>('SELECT status, name, client_id, is_demo FROM projects WHERE id = :id', { id: projectId });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:65: const counts = ctx.db.get<{ total: number; delivered: number }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:77: const p = ctx.db.get<{ status: ProjectStatus; name: string; client_id: number; is_demo: number; completed_at: string | null }>(
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:84: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\production.ts:85: ctx.db.update('projects', id, {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:100: if (ctx.db.get('SELECT 1 FROM tasks WHERE recurrence_key = :key', { key })) return false;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:101: const exists = (table: string, id: number | null | undefined) => (id ? !!ctx.db.get(`SELECT 1 FROM ${table} WHERE id = :id`, { id }) : false);
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:103: ctx.db.insert('tasks', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:125: const client = ctx.db.get<{ id: number; currency: string; archived_at: string | null; status: string }>('SELECT id, currency, archived_at, status FROM clients WHERE id = :id', { id: t.client_id });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:128: if (ctx.db.get('SELECT 1 FROM projects WHERE recurrence_key = :key', { key })) return false;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:130: const editor = t.editor_id && ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: t.editor_id }) ? t.editor_id : null;
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:132: const projectId = ctx.db.insert('projects', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:152: ctx.db.insert('deliverables', {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:184: const rules = ctx.db.all<RecurringRule>(`SELECT * FROM recurring_rules WHERE active = 1 ${onlyRuleId ? 'AND id = :id' : ''}`, { id: onlyRuleId });
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:188: ctx.db.tx(() => {
+E:\yuvrajfx-agency-os-code\yuvrajfx-agency-os\src\server\services\recurrence.ts:206: ctx.db.run('UPDATE recurring_rules SET next_occurrence = :occ, last_generated_at = :now, active = :active, updated_at = :now WHERE id = :id', {

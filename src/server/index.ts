@@ -1,19 +1,22 @@
-import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { existsSync } from 'node:fs';
 import express from 'express';
 import { loadConfig, ROOT } from './config.ts';
 import { Db } from './db/db.ts';
-import { migrate } from './db/migrations.ts';
+import { migratePostgres } from './db/postgres-migrations.ts';
 import { createContext } from './context.ts';
 import { createMailer } from './services/mailer.ts';
 import { createApp } from './app.ts';
 import { startScheduler } from './services/automations.ts';
 
 const config = loadConfig();
-if (config.dbPath !== ':memory:') mkdirSync(path.dirname(config.dbPath), { recursive: true });
-const db = new Db(config.dbPath);
-const applied = migrate(db);
+if (!config.databaseUrl) {
+  console.error('DATABASE_URL is required. Configure PostgreSQL before starting the application.');
+  process.exit(1);
+}
+const db = new Db(config.databaseUrl);
+const applied = await migratePostgres(db.pool);
 const ctx = createContext({ db, config, mailer: createMailer(config.smtp) });
 const app = createApp(ctx);
 
@@ -55,7 +58,7 @@ const server = app.listen(config.port, config.host, (err?: Error) => {
   console.log('');
   console.log('  YuvrajFX Agency OS');
   console.log(`  ➜ ${url}${config.isDev ? '  (development, hot reload)' : ''}`);
-  console.log(`  ➜ database: ${config.dbPath}${applied.length ? `  (migrations applied: ${applied.join(', ')})` : ''}`);
+  console.log(`  ➜ database: PostgreSQL${applied.length ? `  (migrations applied: ${applied.join(', ')})` : ''}`);
   console.log(`  ➜ email: ${ctx.mailer.description}`);
   console.log('');
   if (openOnStart) openBrowser();
@@ -66,7 +69,7 @@ server.on('error', async (err: NodeJS.ErrnoException) => {
     // Started twice from the launcher: just bring up the copy that is already running.
     const running = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok, () => false);
     stopScheduler();
-    db.close();
+    await db.close();
     if (running) {
       console.log(`YuvrajFX Agency OS is already running at ${url}${openOnStart ? '. Opening it in your browser.' : '.'}`);
       if (openOnStart) openBrowser();
@@ -83,8 +86,7 @@ const stopScheduler = startScheduler(ctx);
 function shutdown() {
   stopScheduler();
   server.close(() => {
-    db.close();
-    process.exit(0);
+    void db.close().finally(() => process.exit(0));
   });
   setTimeout(() => process.exit(0), 3000).unref();
 }

@@ -67,13 +67,13 @@ export function authRouter(ctx: AppContext): Router {
   const r = Router();
   const limiter = new LoginLimiter();
 
-  r.get('/state', (req, res) => {
-    const users = ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0;
+  r.get('/state', async (req, res) => {
+    const users = await ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0;
     let client: unknown = null;
     if (req.user?.role === 'client' && req.user.client_id) {
-      client = ctx.db.get('SELECT id, name, company FROM clients WHERE id = :id', { id: req.user.client_id }) ?? null;
+      client = await ctx.db.get('SELECT id, name, company FROM clients WHERE id = :id', { id: req.user.client_id }) ?? null;
     }
-    const s = ctx.settings();
+    const s = await ctx.settings();
     const staff = !!req.user && req.user.role !== 'client';
     res.json({
       needs_setup: users === 0,
@@ -81,8 +81,8 @@ export function authRouter(ctx: AppContext): Router {
       client,
       business_name: s.business_name,
       base_currency: s.base_currency,
-      today: ctx.today(),
-      demo_data: staff ? demoPresent(ctx) : false,
+      today: await ctx.today(),
+      demo_data: staff ? await demoPresent(ctx) : false,
     });
   });
 
@@ -90,15 +90,15 @@ export function authRouter(ctx: AppContext): Router {
   r.post('/setup', async (req, res) => {
     // Only from this computer: over a public link, a stranger could otherwise claim the owner account.
     if (isForwarded(req)) throw forbidden('Finish the first-run setup on the computer that runs the app (http://127.0.0.1:4747).');
-    if ((ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0) > 0) throw conflict('Setup is already complete. Sign in instead.');
+    if ((await ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0) > 0) throw conflict('Setup is already complete. Sign in instead.');
     const body = parse(setupSchema, req.body);
     const problem = passwordProblem(body.password);
     if (problem) throw badRequest(problem, { fields: { password: problem } });
     const hash = await hashPassword(body.password);
     const now = ctx.nowIso();
-    const id = ctx.db.tx(() => {
-      if ((ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0) > 0) throw conflict('Setup is already complete. Sign in instead.');
-      writeSettings(ctx.db, {
+    const id = await ctx.db.tx(async () => {
+      if ((await ctx.db.value<number>('SELECT COUNT(*) FROM users') ?? 0) > 0) throw conflict('Setup is already complete. Sign in instead.');
+      await writeSettings(ctx.db, {
         business_name: body.business_name,
         base_currency: body.base_currency,
         timezone: body.timezone,
@@ -108,7 +108,7 @@ export function authRouter(ctx: AppContext): Router {
       return ctx.db.insert('users', { email: body.email, name: body.name, password_hash: hash, role: 'owner', created_at: now, updated_at: now });
     });
     ctx.invalidateSettings();
-    createSession(ctx, id, req, res);
+    await createSession(ctx, id, req, res);
     res.status(201).json({
       user: publicUser({ id, email: body.email, name: body.name, role: 'owner', client_id: null, team_member_id: null, must_change_password: 0 }),
     });
@@ -118,7 +118,7 @@ export function authRouter(ctx: AppContext): Router {
     const body = parse(loginSchema, req.body);
     const key = `${clientIp(req)}|${body.email}`;
     if (limiter.blocked(key)) throw new HttpError(429, 'Too many sign-in attempts. Wait 15 minutes and try again.');
-    const user = ctx.db.get<UserRow & { client_archived: string | null }>(
+    const user = await ctx.db.get<UserRow & { client_archived: string | null }>(
       `SELECT u.*, c.archived_at AS client_archived FROM users u LEFT JOIN clients c ON c.id = u.client_id WHERE u.email = :email`,
       { email: body.email },
     );
@@ -134,18 +134,18 @@ export function authRouter(ctx: AppContext): Router {
     }
     if (user.disabled || (user.role === 'client' && user.client_archived)) throw unauthorized('This account is disabled. Contact the agency.');
     limiter.reset(key);
-    createSession(ctx, user.id, req, res);
+    await createSession(ctx, user.id, req, res);
     res.json({ user: publicUser(user) });
   });
 
-  r.post('/logout', (req, res) => {
-    destroySession(ctx, req, res);
+  r.post('/logout', async (req, res) => {
+    await destroySession(ctx, req, res);
     res.json({ ok: true });
   });
 
   r.post('/change-password', requireUser, async (req, res) => {
     const body = parse(changePasswordSchema, req.body);
-    const user = ctx.db.get<UserRow>('SELECT * FROM users WHERE id = :id', { id: req.user!.id })!;
+    const user = (await ctx.db.get<UserRow>('SELECT * FROM users WHERE id = :id', { id: req.user!.id }))!;
     if (!(await verifyPassword(body.current_password, user.password_hash))) {
       throw badRequest('Your current password is incorrect.', { fields: { current_password: 'Incorrect password.' } });
     }
@@ -153,10 +153,10 @@ export function authRouter(ctx: AppContext): Router {
     if (problem) throw badRequest(problem, { fields: { new_password: problem } });
     if (body.new_password === body.current_password) throw badRequest('Choose a password you have not used here.', { fields: { new_password: 'Must differ from the current one.' } });
     const hash = await hashPassword(body.new_password);
-    ctx.db.tx(() => {
-      ctx.db.run('UPDATE users SET password_hash = :hash, must_change_password = 0, updated_at = :at WHERE id = :id', { hash, at: ctx.nowIso(), id: user.id });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('UPDATE users SET password_hash = :hash, must_change_password = 0, updated_at = :at WHERE id = :id', { hash, at: ctx.nowIso(), id: user.id });
       // Sign out every other device.
-      ctx.db.run('DELETE FROM sessions WHERE user_id = :id AND id <> :sid', { id: user.id, sid: req.sessionId ?? '' });
+      await ctx.db.run('DELETE FROM sessions WHERE user_id = :id AND id <> :sid', { id: user.id, sid: req.sessionId ?? '' });
     });
     res.json({ ok: true });
   });

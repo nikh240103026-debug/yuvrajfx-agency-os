@@ -59,8 +59,8 @@ function safeDeliverable(d: SafeDeliverable) {
 const PROJECT_SCOPE = `p.client_id = :cid AND p.portal_visible = 1 AND p.archived_at IS NULL AND p.status <> 'cancelled'`;
 
 /** Loads a deliverable only if it belongs to a visible project of this client; otherwise 404. */
-function ownDeliverable(ctx: AppContext, req: Request): SafeDeliverable & { project_name: string; client_id: number } {
-  const d = ctx.db.get<SafeDeliverable & { project_name: string; client_id: number }>(
+async function ownDeliverable(ctx: AppContext, req: Request): Promise<SafeDeliverable & { project_name: string; client_id: number }> {
+  const d = await ctx.db.get<SafeDeliverable & { project_name: string; client_id: number }>(
     `SELECT d.id, d.project_id, d.title, d.format, d.platform, d.deadline, d.status, d.revision_count, d.review_url, d.final_url,
             d.approved_at, d.delivered_at, p.name AS project_name, p.client_id
        FROM deliverables d JOIN projects p ON p.id = d.project_id
@@ -76,23 +76,23 @@ const messageSchema = z.object({ body: requiredText(5000), timecode: optionalTex
 export function portalRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/me', (req, res) => {
+  r.get('/me', async (req, res) => {
     const cid = clientId(req);
-    const client = ctx.db.get('SELECT id, name, company, service_package FROM clients WHERE id = :cid', { cid });
-    const counts = ctx.db.get(
+    const client = await ctx.db.get('SELECT id, name, company, service_package FROM clients WHERE id = :cid', { cid });
+    const counts = await ctx.db.get(
       `SELECT (SELECT COUNT(*) FROM projects p WHERE ${PROJECT_SCOPE} AND p.status <> 'delivered') AS active_projects,
               (SELECT COUNT(*) FROM deliverables d JOIN projects p ON p.id = d.project_id WHERE ${PROJECT_SCOPE} AND d.status = 'client_review') AS awaiting_review,
               (SELECT COUNT(*) FROM deliverables d JOIN projects p ON p.id = d.project_id WHERE ${PROJECT_SCOPE} AND d.status IN ('approved','delivered') AND d.final_url IS NOT NULL) AS downloads`,
       { cid },
     );
-    const open = listInvoices(ctx, { client_id: cid, portal_only: true }).filter((i) => ['sent', 'partially_paid', 'overdue'].includes(i.status));
-    const b = businessProfile(ctx);
+    const open = (await listInvoices(ctx, { client_id: cid, portal_only: true })).filter((i) => ['sent', 'partially_paid', 'overdue'].includes(i.status));
+    const b = await businessProfile(ctx);
     res.json({ client, counts: { ...counts, open_invoices: open.length }, business: { name: b.name, email: b.email, website: b.website } });
   });
 
-  r.get('/projects', (req, res) => {
+  r.get('/projects', async (req, res) => {
     const cid = clientId(req);
-    const projects = ctx.db.all<{ id: number }>(
+    const projects = await ctx.db.all<{ id: number }>(
       `SELECT p.id, p.name, p.type, p.status, p.start_date, p.deadline,
               (SELECT COUNT(*) FROM deliverables d WHERE d.project_id = p.id) AS deliverable_count,
               (SELECT COUNT(*) FROM deliverables d WHERE d.project_id = p.id AND d.status = 'delivered') AS delivered_count,
@@ -104,19 +104,19 @@ export function portalRouter(ctx: AppContext): Router {
     res.json({ projects });
   });
 
-  r.get('/projects/:id', (req, res) => {
+  r.get('/projects/:id', async (req, res) => {
     const cid = clientId(req);
     const id = idParam(req);
-    const project = ctx.db.get(`SELECT p.id, p.name, p.type, p.status, p.start_date, p.deadline FROM projects p WHERE p.id = :id AND ${PROJECT_SCOPE}`, { id, cid });
+    const project = await ctx.db.get(`SELECT p.id, p.name, p.type, p.status, p.start_date, p.deadline FROM projects p WHERE p.id = :id AND ${PROJECT_SCOPE}`, { id, cid });
     if (!project) throw notFound('Project');
-    const deliverables = ctx.db
+    const deliverables = await (await ctx.db
       .all<SafeDeliverable>(
         `SELECT d.id, d.project_id, d.title, d.format, d.platform, d.deadline, d.status, d.revision_count, d.review_url, d.final_url, d.approved_at, d.delivered_at
            FROM deliverables d WHERE d.project_id = :id ORDER BY d.sort_order, d.id`,
         { id },
-      )
+      ))
       .map(safeDeliverable);
-    const feedback = ctx.db.all(
+    const feedback = await ctx.db.all(
       `SELECT f.id, f.deliverable_id, f.kind, f.author_type, f.author_name, f.body, f.timecode, f.created_at
          FROM feedback f WHERE f.project_id = :id AND f.visible_to_client = 1 AND f.kind <> 'internal_note'
         ORDER BY f.created_at DESC, f.id DESC`,
@@ -125,11 +125,11 @@ export function portalRouter(ctx: AppContext): Router {
     res.json({ project, deliverables, feedback });
   });
 
-  r.post('/deliverables/:id/feedback', (req, res) => {
-    const d = ownDeliverable(ctx, req);
+  r.post('/deliverables/:id/feedback', async (req, res) => {
+    const d = await ownDeliverable(ctx, req);
     const body = parse(messageSchema, req.body);
-    const fid = ctx.db.tx(() => {
-      const fid = ctx.db.insert('feedback', {
+    const fid = await ctx.db.tx(async () => {
+      const fid = await ctx.db.insert('feedback', {
         project_id: d.project_id,
         deliverable_id: d.id,
         kind: 'comment',
@@ -141,8 +141,8 @@ export function portalRouter(ctx: AppContext): Router {
         visible_to_client: 1,
         created_at: ctx.nowIso(),
       });
-      logActivity(ctx, actorOf(req), { entity_type: 'feedback', entity_id: fid, client_id: d.client_id, project_id: d.project_id, action: 'client_comment', summary: `${req.user!.name} commented on “${d.title}”` });
-      notify(ctx, {
+      await logActivity(ctx, actorOf(req), { entity_type: 'feedback', entity_id: fid, client_id: d.client_id, project_id: d.project_id, action: 'client_comment', summary: `${req.user!.name} commented on “${d.title}”` });
+      await notify(ctx, {
         kind: 'client_feedback',
         audience: 'staff',
         severity: 'warning',
@@ -158,13 +158,13 @@ export function portalRouter(ctx: AppContext): Router {
     res.status(201).json({ id: fid });
   });
 
-  r.post('/deliverables/:id/approve', (req, res) => {
-    const d = ownDeliverable(ctx, req);
+  r.post('/deliverables/:id/approve', async (req, res) => {
+    const d = await ownDeliverable(ctx, req);
     if (d.status !== 'client_review') throw conflict('This video is not waiting for your review right now.');
     const body = parse(z.object({ body: optionalText(5000) }), req.body ?? {});
-    ctx.db.tx(() => {
-      setDeliverableStatus(ctx, actorOf(req), d.id, 'approved', { reason: `approved by ${req.user!.name} in the portal` });
-      const fid = ctx.db.insert('feedback', {
+    await ctx.db.tx(async () => {
+      await setDeliverableStatus(ctx, actorOf(req), d.id, 'approved', { reason: `approved by ${req.user!.name} in the portal` });
+      const fid = await ctx.db.insert('feedback', {
         project_id: d.project_id,
         deliverable_id: d.id,
         kind: 'approval',
@@ -175,7 +175,7 @@ export function portalRouter(ctx: AppContext): Router {
         visible_to_client: 1,
         created_at: ctx.nowIso(),
       });
-      notify(ctx, {
+      await notify(ctx, {
         kind: 'client_approval',
         audience: 'staff',
         severity: 'success',
@@ -190,13 +190,13 @@ export function portalRouter(ctx: AppContext): Router {
     res.json({ ok: true });
   });
 
-  r.post('/deliverables/:id/request-changes', (req, res) => {
-    const d = ownDeliverable(ctx, req);
+  r.post('/deliverables/:id/request-changes', async (req, res) => {
+    const d = await ownDeliverable(ctx, req);
     if (d.status !== 'client_review') throw conflict('This video is not waiting for your review right now.');
     const body = parse(messageSchema, req.body);
-    ctx.db.tx(() => {
-      const { revision_count } = setDeliverableStatus(ctx, actorOf(req), d.id, 'revisions', { reason: `changes requested by ${req.user!.name}` });
-      const fid = ctx.db.insert('feedback', {
+    await ctx.db.tx(async () => {
+      const { revision_count } = await setDeliverableStatus(ctx, actorOf(req), d.id, 'revisions', { reason: `changes requested by ${req.user!.name}` });
+      const fid = await ctx.db.insert('feedback', {
         project_id: d.project_id,
         deliverable_id: d.id,
         kind: 'revision_request',
@@ -209,7 +209,7 @@ export function portalRouter(ctx: AppContext): Router {
         visible_to_client: 1,
         created_at: ctx.nowIso(),
       });
-      notify(ctx, {
+      await notify(ctx, {
         kind: 'client_revision',
         audience: 'staff',
         severity: 'warning',
@@ -224,8 +224,8 @@ export function portalRouter(ctx: AppContext): Router {
     res.json({ ok: true });
   });
 
-  r.get('/invoices', (req, res) => {
-    const invoices = listInvoices(ctx, { client_id: clientId(req), portal_only: true }).map((i) => ({
+  r.get('/invoices', async (req, res) => {
+    const invoices = (await listInvoices(ctx, { client_id: clientId(req), portal_only: true })).map((i) => ({
       id: i.id,
       number: i.number,
       issue_date: i.issue_date,
@@ -240,8 +240,8 @@ export function portalRouter(ctx: AppContext): Router {
     res.json({ invoices });
   });
 
-  r.get('/invoices/:id', (req, res) => {
-    const inv = getInvoice(ctx, idParam(req));
+  r.get('/invoices/:id', async (req, res) => {
+    const inv = await getInvoice(ctx, idParam(req));
     if (!inv || inv.client_id !== clientId(req) || inv.state === 'draft' || !inv.portal_visible) throw notFound('Invoice');
     const { internal_notes: _internal, void_reason: _void, ...rest } = inv as typeof inv & { internal_notes?: unknown; void_reason?: unknown };
     res.json({
@@ -252,7 +252,7 @@ export function portalRouter(ctx: AppContext): Router {
           return safe;
         }),
       },
-      business: businessProfile(ctx),
+      business: await businessProfile(ctx),
     });
   });
 

@@ -2,12 +2,10 @@ node_modules/
 dist/
 coverage/
 
-# Local data: your real clients, invoices, sessions and backups live here. Never commit it.
+# Local backup dumps and logs must never be committed.
 data/
 logs/
-*.db
-*.db-shm
-*.db-wal
+*.dump
 
 # Secrets
 .env

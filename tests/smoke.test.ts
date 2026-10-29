@@ -6,10 +6,10 @@ import { runAutomations } from '../src/server/services/automations.ts';
 // that references a parameter it was not given, so this also guards against silent NULL filters.
 describe('smoke: every read endpoint works on a populated database', () => {
   test('staff endpoints', async () => {
-    const { app, ctx } = makeApp();
+    const { app, ctx } = await makeApp();
     const api = await ownerClient(app);
     ok(await api.post('/api/settings/demo'), 201);
-    runAutomations(ctx, 'manual');
+    await runAutomations(ctx, 'manual');
     const clientId = ok<{ clients: { id: number }[] }>(await api.get('/api/clients')).clients[0].id;
     const projectId = ok<{ projects: { id: number }[] }>(await api.get('/api/projects')).projects[0].id;
     const invoiceId = ok<{ invoices: { id: number }[] }>(await api.get('/api/invoices')).invoices[0].id;
@@ -100,7 +100,7 @@ describe('smoke: every read endpoint works on a populated database', () => {
   });
 
   test('search finds projects by client name and keeps finance records admin-only', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const owner = await ownerClient(app);
     ok(await owner.post('/api/settings/demo'), 201);
     const types = (body: { results: { type: string; subtitle: string | null }[] }) => new Set(body.results.map((r) => r.type));
@@ -117,7 +117,7 @@ describe('smoke: every read endpoint works on a populated database', () => {
   });
 
   test('portal endpoints', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const owner = await ownerClient(app);
     ok(await owner.post('/api/settings/demo'), 201);
     const c = ok<{ clients: { id: number; company: string }[] }>(await owner.get('/api/clients')).clients.find((x) => x.company === 'Northwind Creators')!;

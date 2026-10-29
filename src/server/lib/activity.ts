@@ -22,8 +22,8 @@ export type ActivityEntry = {
   is_demo?: boolean | number;
 };
 
-export function logActivity(ctx: AppContext, actor: Actor, entry: ActivityEntry): void {
-  ctx.db.insert('activity', {
+export async function logActivity(ctx: AppContext, actor: Actor, entry: ActivityEntry): Promise<void> {
+  await ctx.db.insert('activity', {
     entity_type: entry.entity_type,
     entity_id: entry.entity_id,
     client_id: entry.client_id ?? null,

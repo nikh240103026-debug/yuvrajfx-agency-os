@@ -3,7 +3,7 @@ import { createClient, makeApp, ok, ownerClient } from './helpers.ts';
 
 describe('clients', () => {
   test('create, validate, edit, search, filter by tag and status', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const bad = await api.post('/api/clients', { name: '', currency: 'XYZ', website: 'javascript:alert(1)' });
     expect(bad.status).toBe(400);
@@ -34,7 +34,7 @@ describe('clients', () => {
   });
 
   test('communication log and activity timeline', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const id = await createClient(api);
     ok(await api.post(`/api/clients/${id}/communications`, { channel: 'call', direction: 'outbound', subject: 'Check-in', body: 'Talked scope', occurred_at: '2026-10-20' }), 201);
@@ -43,7 +43,7 @@ describe('clients', () => {
   });
 
   test('clients with history can be archived but not deleted', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const id = await createClient(api);
     ok(await api.post('/api/projects', { client_id: id, name: 'Shorts', type: 'short_form' }), 201);
@@ -56,7 +56,7 @@ describe('clients', () => {
 
 describe('projects and deliverables', () => {
   test('project with deliverables, stage moves, revision counting and auto-completion', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const editor = ok<{ id: number }>(await api.post('/api/team', { name: 'Dev Arora', title: 'Editor' }), 201).id;
@@ -111,7 +111,7 @@ describe('projects and deliverables', () => {
   });
 
   test('revision requests are logged in the history and move the deliverable', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const pid = ok<{ id: number }>(await api.post('/api/projects', { client_id: cid, name: 'Ad', type: 'ad', deliverables: [{ title: 'Ad 30s', status: 'client_review' }] }), 201).id;
@@ -126,7 +126,7 @@ describe('projects and deliverables', () => {
   });
 
   test('list filters: overdue, editor, scope', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     ok(await api.post('/api/projects', { client_id: cid, name: 'Late', type: 'long_form', deadline: '2026-10-20' }), 201);

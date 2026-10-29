@@ -110,15 +110,15 @@ const listQuery = z.object({
   overdue: qStr(),
 });
 
-function checkRefs(ctx: AppContext, body: { client_id?: number; editor_id?: number | null; start_date?: string | null; deadline?: string | null }) {
-  if (body.client_id && !ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: body.client_id })) throw badRequest('Pick an existing client.');
-  if (body.editor_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.editor_id })) throw badRequest('That editor is not on the team.');
+async function checkRefs(ctx: AppContext, body: { client_id?: number; editor_id?: number | null; start_date?: string | null; deadline?: string | null }) {
+  if (body.client_id && !await ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: body.client_id })) throw badRequest('Pick an existing client.');
+  if (body.editor_id && !await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.editor_id })) throw badRequest('That editor is not on the team.');
   if (body.start_date && body.deadline && body.deadline < body.start_date) throw badRequest('The deadline cannot be before the start date.');
 }
 
-export function listProjects(ctx: AppContext, query: Partial<z.output<typeof listQuery>>) {
+export async function listProjects(ctx: AppContext, query: Partial<z.output<typeof listQuery>>) {
   const where: string[] = [];
-  const params: Record<string, unknown> = { today: ctx.today() };
+  const params: Record<string, unknown> = { today: await ctx.today() };
   if (query.scope === 'archived') where.push('p.archived_at IS NOT NULL');
   else {
     where.push('p.archived_at IS NULL');
@@ -150,7 +150,7 @@ export function listProjects(ctx: AppContext, query: Partial<z.output<typeof lis
     where.push('(p.name LIKE :q OR p.description LIKE :q OR c.name LIKE :q OR c.company LIKE :q)');
     params.q = likeParam(query.q);
   }
-  return ctx.db
+  return await (await ctx.db
     .all<Record<string, unknown>>(
       `SELECT p.*, COALESCE(c.company, c.name) AS client_name, c.is_demo AS client_is_demo,
               t.name AS editor_name, t.color AS editor_color, ${PROJECT_SUMMARY_COLUMNS}
@@ -161,7 +161,7 @@ export function listProjects(ctx: AppContext, query: Partial<z.output<typeof lis
         ORDER BY CASE p.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
                  COALESCE(p.deadline, '9999-12-31'), p.id DESC`,
       params,
-    )
+    ))
     .map((p) => withJson(p, { reference_links: [], asset_links: [] }));
 }
 
@@ -178,11 +178,11 @@ export type DeliverableQuery = {
   delivered_since?: string;
 };
 
-export function listDeliverables(ctx: AppContext, f: DeliverableQuery) {
+export async function listDeliverables(ctx: AppContext, f: DeliverableQuery) {
   const where: string[] = [`p.archived_at IS NULL`, `p.status NOT IN ('cancelled')`];
   // Paused projects stay off the production board (they still show on their own project page).
   if (!f.project_id) where.push(`p.status <> 'on_hold'`);
-  const params: Record<string, unknown> = { today: ctx.today() };
+  const params: Record<string, unknown> = { today: await ctx.today() };
   if (f.status) {
     where.push('d.status = :status');
     params.status = f.status;
@@ -236,7 +236,7 @@ export function listDeliverables(ctx: AppContext, f: DeliverableQuery) {
   );
 }
 
-function insertDeliverable(ctx: AppContext, projectId: number, d: z.output<typeof deliverableCreate>, sort: number, isDemo = 0): number {
+async function insertDeliverable(ctx: AppContext, projectId: number, d: z.output<typeof deliverableCreate>, sort: number, isDemo = 0): Promise<number> {
   const now = ctx.nowIso();
   return ctx.db.insert('deliverables', {
     ...d,
@@ -255,14 +255,14 @@ function insertDeliverable(ctx: AppContext, projectId: number, d: z.output<typeo
 export function projectsRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const query = parse(listQuery, req.query);
-    const rows = listProjects(ctx, query);
+    const rows = await listProjects(ctx, query);
     res.json({ projects: canSeeFinance(req) ? rows : rows.map((p) => stripFields(p, PRICE_FIELDS)) });
   });
 
-  r.get('/export.csv', requireAdmin, (_req, res) => {
-    const rows = listProjects(ctx, { scope: 'all' });
+  r.get('/export.csv', requireAdmin, async (_req, res) => {
+    const rows = await listProjects(ctx, { scope: 'all' });
     const csv = toCsv(rows, [
       { header: 'ID', value: (p) => p.id },
       { header: 'Project', value: (p) => p.name },
@@ -282,19 +282,19 @@ export function projectsRouter(ctx: AppContext): Router {
       { header: 'Overdue', value: (p) => (p.is_overdue ? 'yes' : '') },
       { header: 'Demo data', value: (p) => (p.is_demo ? 'yes' : '') },
     ]);
-    sendCsv(ctx, res, 'projects', csv);
+    await sendCsv(ctx, res, 'projects', csv);
   });
 
-  r.post('/', requireAdmin, (req, res) => {
+  r.post('/', requireAdmin, async (req, res) => {
     const body = parse(projectCreate, req.body);
-    checkRefs(ctx, body);
-    const client = ctx.db.get<{ currency: string; archived_at: string | null; is_demo: number }>('SELECT currency, archived_at, is_demo FROM clients WHERE id = :id', { id: body.client_id })!;
+    await checkRefs(ctx, body);
+    const client = (await ctx.db.get<{ currency: string; archived_at: string | null; is_demo: number }>('SELECT currency, archived_at, is_demo FROM clients WHERE id = :id', { id: body.client_id }))!;
     if (client.archived_at) throw badRequest('That client is archived. Restore it first.');
     const { deliverables, ...fields } = body;
-    for (const d of deliverables ?? []) if (d.assignee_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: d.assignee_id })) throw badRequest('A deliverable is assigned to someone not on the team.');
+    for (const d of deliverables ?? []) if (d.assignee_id && !await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: d.assignee_id })) throw badRequest('A deliverable is assigned to someone not on the team.');
     const now = ctx.nowIso();
-    const id = ctx.db.tx(() => {
-      const id = ctx.db.insert('projects', {
+    const id = await ctx.db.tx(async () => {
+      const id = await ctx.db.insert('projects', {
         ...fields,
         currency: fields.currency ?? client.currency,
         billing_type: fields.billing_type ?? 'fixed',
@@ -305,8 +305,8 @@ export function projectsRouter(ctx: AppContext): Router {
         created_at: now,
         updated_at: now,
       });
-      (deliverables ?? []).forEach((d, i) => insertDeliverable(ctx, id, d, i));
-      logActivity(ctx, actorOf(req), {
+      for (const [i, d] of (deliverables ?? []).entries()) await insertDeliverable(ctx, id, d, i);
+      await logActivity(ctx, actorOf(req), {
         entity_type: 'project',
         entity_id: id,
         client_id: body.client_id,
@@ -319,31 +319,31 @@ export function projectsRouter(ctx: AppContext): Router {
     res.status(201).json({ id });
   });
 
-  r.get('/:id', (req, res) => {
+  r.get('/:id', async (req, res) => {
     const id = idParam(req);
-    const row = ctx.db.get<Record<string, unknown>>(
+    const row = await ctx.db.get<Record<string, unknown>>(
       `SELECT p.*, COALESCE(c.company, c.name) AS client_name, c.name AS client_contact, c.email AS client_email,
               t.name AS editor_name, t.color AS editor_color, ${PROJECT_SUMMARY_COLUMNS}
          FROM projects p JOIN clients c ON c.id = p.client_id LEFT JOIN team_members t ON t.id = p.editor_id
         WHERE p.id = :id`,
-      { id, today: ctx.today() },
+      { id, today: await ctx.today() },
     );
     if (!row) throw notFound('Project');
     const project = withJson(row, { reference_links: [], asset_links: [] });
-    const deliverables = listDeliverables(ctx, { project_id: id, include_delivered: true }).sort((a, b) => (a.sort_order as number) - (b.sort_order as number) || (a.id as number) - (b.id as number));
-    const feedback = ctx.db.all(
+    const deliverables = await (await listDeliverables(ctx, { project_id: id, include_delivered: true })).sort((a, b) => (a.sort_order as number) - (b.sort_order as number) || (a.id as number) - (b.id as number));
+    const feedback = await ctx.db.all(
       `SELECT f.*, d.title AS deliverable_title FROM feedback f LEFT JOIN deliverables d ON d.id = f.deliverable_id
         WHERE f.project_id = :id ORDER BY f.created_at DESC, f.id DESC`,
       { id },
     );
-    const activity = ctx.db.all(
+    const activity = await ctx.db.all(
       `SELECT id, entity_type, action, summary, actor_type, actor_name, created_at FROM activity
         WHERE project_id = :id ${canSeeFinance(req) ? '' : "AND entity_type NOT IN ('invoice','payment')"}
         ORDER BY created_at DESC LIMIT 100`,
       { id },
     );
-    const tasks = ctx.db.all(`SELECT id, title, status, priority, due_date FROM tasks WHERE project_id = :id ORDER BY status = 'done', COALESCE(due_date,'9999'), id`, { id });
-    const invoices = canSeeFinance(req) ? listInvoices(ctx, { project_id: id }) : [];
+    const tasks = await ctx.db.all(`SELECT id, title, status, priority, due_date FROM tasks WHERE project_id = :id ORDER BY status = 'done', COALESCE(due_date,'9999'), id`, { id });
+    const invoices = canSeeFinance(req) ? await listInvoices(ctx, { project_id: id }) : [];
     res.json({
       project: canSeeFinance(req) ? project : stripFields(project, PRICE_FIELDS),
       deliverables,
@@ -354,23 +354,23 @@ export function projectsRouter(ctx: AppContext): Router {
     });
   });
 
-  r.patch('/:id', (req: Request, res) => {
+  r.patch('/:id', async (req: Request, res) => {
     const id = idParam(req);
-    const existing = ctx.db.get<{ status: string; name: string; client_id: number; start_date: string | null; deadline: string | null }>(
+    const existing = await ctx.db.get<{ status: string; name: string; client_id: number; start_date: string | null; deadline: string | null }>(
       'SELECT status, name, client_id, start_date, deadline FROM projects WHERE id = :id',
       { id },
     );
     if (!existing) throw notFound('Project');
     const body = isAdmin(req) ? parse(projectUpdate, req.body) : parse(projectUpdateMember, req.body);
-    checkRefs(ctx, { ...body, start_date: body.start_date !== undefined ? body.start_date : existing.start_date, deadline: body.deadline !== undefined ? body.deadline : existing.deadline });
+    await checkRefs(ctx, { ...body, start_date: body.start_date !== undefined ? body.start_date : existing.start_date, deadline: body.deadline !== undefined ? body.deadline : existing.deadline });
     if ('client_id' in body && body.client_id && body.client_id !== existing.client_id) {
-      if (ctx.db.get('SELECT 1 FROM invoices WHERE project_id = :id', { id })) throw conflict('This project is already invoiced; it cannot move to another client.');
+      if (await ctx.db.get('SELECT 1 FROM invoices WHERE project_id = :id', { id })) throw conflict('This project is already invoiced; it cannot move to another client.');
     }
     const { status, ...rest } = body;
-    ctx.db.tx(() => {
-      ctx.db.update('projects', id, { ...rest, updated_at: ctx.nowIso() });
+    await ctx.db.tx(async () => {
+      await ctx.db.update('projects', id, { ...rest, updated_at: ctx.nowIso() });
       if (Object.keys(rest).length) {
-        logActivity(ctx, actorOf(req), {
+        await logActivity(ctx, actorOf(req), {
           entity_type: 'project',
           entity_id: id,
           client_id: (rest as { client_id?: number }).client_id ?? existing.client_id,
@@ -379,52 +379,52 @@ export function projectsRouter(ctx: AppContext): Router {
           summary: `Project “${rest.name ?? existing.name}” updated`,
         });
       }
-      if (status) setProjectStatus(ctx, actorOf(req), id, status);
+      if (status) await setProjectStatus(ctx, actorOf(req), id, status);
     });
     res.json({ ok: true });
   });
 
-  r.post('/:id/archive', requireAdmin, (req, res) => {
+  r.post('/:id/archive', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+    const p = await ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
     if (!p) throw notFound('Project');
-    ctx.db.run('UPDATE projects SET archived_at = :at, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
-    logActivity(ctx, actorOf(req), { entity_type: 'project', entity_id: id, client_id: p.client_id, project_id: id, action: 'archived', summary: `Project “${p.name}” archived` });
+    await ctx.db.run('UPDATE projects SET archived_at = :at, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+    await logActivity(ctx, actorOf(req), { entity_type: 'project', entity_id: id, client_id: p.client_id, project_id: id, action: 'archived', summary: `Project “${p.name}” archived` });
     res.json({ ok: true });
   });
 
-  r.post('/:id/restore', requireAdmin, (req, res) => {
+  r.post('/:id/restore', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+    const p = await ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
     if (!p) throw notFound('Project');
-    ctx.db.run('UPDATE projects SET archived_at = NULL, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
-    logActivity(ctx, actorOf(req), { entity_type: 'project', entity_id: id, client_id: p.client_id, project_id: id, action: 'restored', summary: `Project “${p.name}” restored` });
+    await ctx.db.run('UPDATE projects SET archived_at = NULL, updated_at = :at WHERE id = :id', { at: ctx.nowIso(), id });
+    await logActivity(ctx, actorOf(req), { entity_type: 'project', entity_id: id, client_id: p.client_id, project_id: id, action: 'restored', summary: `Project “${p.name}” restored` });
     res.json({ ok: true });
   });
 
-  r.delete('/:id', requireAdmin, (req, res) => {
+  r.delete('/:id', requireAdmin, async (req, res) => {
     const id = idParam(req);
-    const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+    const p = await ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
     if (!p) throw notFound('Project');
-    if (ctx.db.get('SELECT 1 FROM invoices WHERE project_id = :id', { id })) throw conflict('This project has invoices. Archive it instead, so your financial history stays intact.');
-    ctx.db.tx(() => {
-      ctx.db.run('DELETE FROM projects WHERE id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'project', entity_id: id, client_id: p.client_id, action: 'deleted', summary: `Project “${p.name}” deleted with its deliverables` });
+    if (await ctx.db.get('SELECT 1 FROM invoices WHERE project_id = :id', { id })) throw conflict('This project has invoices. Archive it instead, so your financial history stays intact.');
+    await ctx.db.tx(async () => {
+      await ctx.db.run('DELETE FROM projects WHERE id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'project', entity_id: id, client_id: p.client_id, action: 'deleted', summary: `Project “${p.name}” deleted with its deliverables` });
     });
     res.json({ ok: true });
   });
 
-  r.post('/:id/deliverables', (req, res) => {
+  r.post('/:id/deliverables', async (req, res) => {
     const id = idParam(req);
-    const p = ctx.db.get<{ name: string; client_id: number; is_demo: number }>('SELECT name, client_id, is_demo FROM projects WHERE id = :id', { id });
+    const p = await ctx.db.get<{ name: string; client_id: number; is_demo: number }>('SELECT name, client_id, is_demo FROM projects WHERE id = :id', { id });
     if (!p) throw notFound('Project');
     const body = parse(z.union([deliverableCreate, z.object({ items: z.array(deliverableCreate).min(1).max(100) })]), req.body);
     const items = 'items' in body ? body.items : [body];
-    for (const d of items) if (d.assignee_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: d.assignee_id })) throw badRequest('That assignee is not on the team.');
-    const ids = ctx.db.tx(() => {
-      const base = (ctx.db.value<number>('SELECT COALESCE(MAX(sort_order), -1) FROM deliverables WHERE project_id = :id', { id }) ?? -1) + 1;
-      const ids = items.map((d, i) => insertDeliverable(ctx, id, d, base + i));
-      logActivity(ctx, actorOf(req), {
+    for (const d of items) if (d.assignee_id && !await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: d.assignee_id })) throw badRequest('That assignee is not on the team.');
+    const ids = await ctx.db.tx(async () => {
+      const base = (await ctx.db.value<number>('SELECT COALESCE(MAX(sort_order), -1) FROM deliverables WHERE project_id = :id', { id }) ?? -1) + 1;
+      const ids = await Promise.all(items.map(async (d, i) => insertDeliverable(ctx, id, d, base + i)));
+      await logActivity(ctx, actorOf(req), {
         entity_type: 'deliverable',
         entity_id: ids[0],
         client_id: p.client_id,
@@ -433,32 +433,32 @@ export function projectsRouter(ctx: AppContext): Router {
         summary: items.length === 1 ? `Deliverable “${items[0].title}” added to ${p.name}` : `${items.length} deliverables added to ${p.name}`,
       });
       // A delivered project that gets new work is live again.
-      const status = ctx.db.value<string>('SELECT status FROM projects WHERE id = :id', { id });
-      if (status === 'delivered') setProjectStatus(ctx, actorOf(req), id, items[0].status ?? 'backlog', 'new deliverables added');
+      const status = await ctx.db.value<string>('SELECT status FROM projects WHERE id = :id', { id });
+      if (status === 'delivered') await setProjectStatus(ctx, actorOf(req), id, items[0].status ?? 'backlog', 'new deliverables added');
       return ids;
     });
     res.status(201).json({ ids, id: ids[0] });
   });
 
-  r.post('/:id/feedback', (req, res) => {
+  r.post('/:id/feedback', async (req, res) => {
     const id = idParam(req);
-    const p = ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
+    const p = await ctx.db.get<{ name: string; client_id: number }>('SELECT name, client_id FROM projects WHERE id = :id', { id });
     if (!p) throw notFound('Project');
     const body = parse(feedbackCreate, req.body);
     let deliverableTitle: string | null = null;
     if (body.deliverable_id) {
-      const d = ctx.db.get<{ project_id: number; title: string }>('SELECT project_id, title FROM deliverables WHERE id = :id', { id: body.deliverable_id });
+      const d = await ctx.db.get<{ project_id: number; title: string }>('SELECT project_id, title FROM deliverables WHERE id = :id', { id: body.deliverable_id });
       if (!d || d.project_id !== id) throw badRequest('That deliverable is not part of this project.');
       deliverableTitle = d.title;
     }
     if (body.kind === 'approval' && !body.deliverable_id) throw badRequest('Pick the deliverable that was approved.');
-    const fid = ctx.db.tx(() => {
+    const fid = await ctx.db.tx(async () => {
       let revision: number | null = null;
       if (body.deliverable_id && body.kind === 'revision_request' && body.move_to_revisions !== false) {
-        revision = setDeliverableStatus(ctx, actorOf(req), body.deliverable_id, 'revisions', { reason: 'revision request logged' }).revision_count;
+        revision = (await setDeliverableStatus(ctx, actorOf(req), body.deliverable_id, 'revisions', { reason: 'revision request logged' })).revision_count;
       }
-      if (body.deliverable_id && body.kind === 'approval') setDeliverableStatus(ctx, actorOf(req), body.deliverable_id, 'approved', { reason: 'approval logged' });
-      const fid = ctx.db.insert('feedback', {
+      if (body.deliverable_id && body.kind === 'approval') await setDeliverableStatus(ctx, actorOf(req), body.deliverable_id, 'approved', { reason: 'approval logged' });
+      const fid = await ctx.db.insert('feedback', {
         project_id: id,
         deliverable_id: body.deliverable_id,
         kind: body.kind,
@@ -471,7 +471,7 @@ export function projectsRouter(ctx: AppContext): Router {
         visible_to_client: body.kind === 'internal_note' ? 0 : body.visible_to_client ?? 1,
         created_at: ctx.nowIso(),
       });
-      logActivity(ctx, actorOf(req), {
+      await logActivity(ctx, actorOf(req), {
         entity_type: 'feedback',
         entity_id: fid,
         client_id: p.client_id,
@@ -502,10 +502,10 @@ export function deliverablesRouter(ctx: AppContext): Router {
     delivered_since: qStr(),
   });
 
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const q = parse(query, req.query);
     res.json({
-      deliverables: listDeliverables(ctx, {
+      deliverables: await listDeliverables(ctx, {
         ...q,
         overdue: q.overdue === '1',
         include_delivered: q.include_delivered === '1',
@@ -513,8 +513,8 @@ export function deliverablesRouter(ctx: AppContext): Router {
     });
   });
 
-  r.get('/export.csv', requireAdmin, (_req, res) => {
-    const rows = listDeliverables(ctx, { include_delivered: true });
+  r.get('/export.csv', requireAdmin, async (_req, res) => {
+    const rows = await listDeliverables(ctx, { include_delivered: true });
     const csv = toCsv(rows, [
       { header: 'ID', value: (d) => d.id },
       { header: 'Title', value: (d) => d.title },
@@ -532,29 +532,29 @@ export function deliverablesRouter(ctx: AppContext): Router {
       { header: 'Delivered at', value: (d) => d.delivered_at },
       { header: 'Overdue', value: (d) => (d.is_overdue ? 'yes' : '') },
     ]);
-    sendCsv(ctx, res, 'deliverables', csv);
+    await sendCsv(ctx, res, 'deliverables', csv);
   });
 
-  r.patch('/:id', (req, res) => {
+  r.patch('/:id', async (req, res) => {
     const id = idParam(req);
-    const existing = ctx.db.get<{ project_id: number; title: string; client_id: number }>(
+    const existing = await ctx.db.get<{ project_id: number; title: string; client_id: number }>(
       'SELECT d.project_id, d.title, p.client_id FROM deliverables d JOIN projects p ON p.id = d.project_id WHERE d.id = :id',
       { id },
     );
     if (!existing) throw notFound('Deliverable');
     const body = parse(deliverableUpdate, req.body);
-    if (body.assignee_id && !ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.assignee_id })) throw badRequest('That assignee is not on the team.');
+    if (body.assignee_id && !await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: body.assignee_id })) throw badRequest('That assignee is not on the team.');
     if (body.project_id && body.project_id !== existing.project_id) {
       if (!isAdmin(req)) throw forbidden('Only an admin can move deliverables between projects.');
-      if (!ctx.db.get('SELECT 1 FROM projects WHERE id = :id', { id: body.project_id })) throw badRequest('That project does not exist.');
+      if (!await ctx.db.get('SELECT 1 FROM projects WHERE id = :id', { id: body.project_id })) throw badRequest('That project does not exist.');
     }
     const { status, ...rest } = body;
-    ctx.db.tx(() => {
+    await ctx.db.tx(async () => {
       if (Object.keys(rest).length) {
-        ctx.db.update('deliverables', id, { ...rest, updated_at: ctx.nowIso() });
+        await ctx.db.update('deliverables', id, { ...rest, updated_at: ctx.nowIso() });
         const fields = Object.keys(rest).filter((k) => k !== 'revision_count');
         if (fields.length) {
-          logActivity(ctx, actorOf(req), {
+          await logActivity(ctx, actorOf(req), {
             entity_type: 'deliverable',
             entity_id: id,
             client_id: existing.client_id,
@@ -564,22 +564,22 @@ export function deliverablesRouter(ctx: AppContext): Router {
           });
         }
       }
-      if (status) setDeliverableStatus(ctx, actorOf(req), id, status, { countRevision: rest.revision_count === undefined });
+      if (status) await setDeliverableStatus(ctx, actorOf(req), id, status, { countRevision: rest.revision_count === undefined });
     });
-    const row = listDeliverables(ctx, { include_delivered: true, project_id: rest.project_id ?? existing.project_id }).find((d) => d.id === id);
+    const row = (await listDeliverables(ctx, { include_delivered: true, project_id: rest.project_id ?? existing.project_id })).find((d) => d.id === id);
     res.json({ deliverable: row ?? null });
   });
 
-  r.delete('/:id', (req, res) => {
+  r.delete('/:id', async (req, res) => {
     const id = idParam(req);
-    const d = ctx.db.get<{ title: string; project_id: number; client_id: number }>(
+    const d = await ctx.db.get<{ title: string; project_id: number; client_id: number }>(
       'SELECT d.title, d.project_id, p.client_id FROM deliverables d JOIN projects p ON p.id = d.project_id WHERE d.id = :id',
       { id },
     );
     if (!d) throw notFound('Deliverable');
-    ctx.db.tx(() => {
-      ctx.db.run('DELETE FROM deliverables WHERE id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'deliverable', entity_id: id, client_id: d.client_id, project_id: d.project_id, action: 'deleted', summary: `Deliverable “${d.title}” deleted` });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('DELETE FROM deliverables WHERE id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'deliverable', entity_id: id, client_id: d.client_id, project_id: d.project_id, action: 'deleted', summary: `Deliverable “${d.title}” deleted` });
     });
     res.json({ ok: true });
   });
@@ -589,19 +589,19 @@ export function deliverablesRouter(ctx: AppContext): Router {
 
 export function feedbackRouter(ctx: AppContext): Router {
   const r = Router();
-  r.patch('/:id', (req, res) => {
+  r.patch('/:id', async (req, res) => {
     const id = idParam(req);
     const body = parse(z.object({ resolved: z.boolean() }), req.body);
-    const changes = ctx.db.run('UPDATE feedback SET resolved_at = :at WHERE id = :id', { at: body.resolved ? ctx.nowIso() : null, id }).changes;
+    const changes = (await ctx.db.run('UPDATE feedback SET resolved_at = :at WHERE id = :id', { at: body.resolved ? ctx.nowIso() : null, id })).changes;
     if (!changes) throw notFound('Feedback');
     res.json({ ok: true });
   });
-  r.delete('/:id', (req, res) => {
+  r.delete('/:id', async (req, res) => {
     const id = idParam(req);
-    const f = ctx.db.get<{ author_type: string }>('SELECT author_type FROM feedback WHERE id = :id', { id });
+    const f = await ctx.db.get<{ author_type: string }>('SELECT author_type FROM feedback WHERE id = :id', { id });
     if (!f) throw notFound('Feedback');
     if (f.author_type === 'client' && !isAdmin(req)) throw forbidden('Only an admin can delete client feedback.');
-    ctx.db.run('DELETE FROM feedback WHERE id = :id', { id });
+    await ctx.db.run('DELETE FROM feedback WHERE id = :id', { id });
     res.json({ ok: true });
   });
   return r;

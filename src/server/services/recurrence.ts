@@ -94,18 +94,18 @@ export function renderTitle(template: string, occ: ISODate): string {
     .replace(/\{\{\s*date\s*\}\}/g, formatDate(occ));
 }
 
-function createTaskFor(ctx: AppContext, rule: RecurringRule, occ: ISODate): boolean {
+async function createTaskFor(ctx: AppContext, rule: RecurringRule, occ: ISODate): Promise<boolean> {
   const t = json<TaskTemplate>(rule.template, {});
   const key = `rule:${rule.id}:${occ}`;
-  if (ctx.db.get('SELECT 1 FROM tasks WHERE recurrence_key = :key', { key })) return false;
-  const exists = (table: string, id: number | null | undefined) => (id ? !!ctx.db.get(`SELECT 1 FROM ${table} WHERE id = :id`, { id }) : false);
+  if (await ctx.db.get('SELECT 1 FROM tasks WHERE recurrence_key = :key', { key })) return false;
+  const exists = async (table: string, id: number | null | undefined) => (id ? !!await ctx.db.get(`SELECT 1 FROM ${table} WHERE id = :id`, { id }) : false);
   const now = ctx.nowIso();
-  ctx.db.insert('tasks', {
+  await ctx.db.insert('tasks', {
     title: renderTitle(rule.title, occ),
     description: t.description ?? null,
-    client_id: exists('clients', t.client_id) ? t.client_id : null,
-    project_id: exists('projects', t.project_id) ? t.project_id : null,
-    assignee_id: exists('team_members', t.assignee_id) ? t.assignee_id : null,
+    client_id: await exists('clients', t.client_id) ? t.client_id : null,
+    project_id: await exists('projects', t.project_id) ? t.project_id : null,
+    assignee_id: await exists('team_members', t.assignee_id) ? t.assignee_id : null,
     priority: ['low', 'medium', 'high', 'urgent'].includes(t.priority ?? '') ? t.priority : 'medium',
     due_date: occ,
     status: 'todo',
@@ -119,17 +119,17 @@ function createTaskFor(ctx: AppContext, rule: RecurringRule, occ: ISODate): bool
   return true;
 }
 
-function createProjectFor(ctx: AppContext, rule: RecurringRule, occ: ISODate, actor: Actor): boolean | 'skipped' {
+async function createProjectFor(ctx: AppContext, rule: RecurringRule, occ: ISODate, actor: Actor): Promise<boolean | 'skipped'> {
   const t = json<ProjectTemplate | null>(rule.template, null);
   if (!t?.client_id) return 'skipped';
-  const client = ctx.db.get<{ id: number; currency: string; archived_at: string | null; status: string }>('SELECT id, currency, archived_at, status FROM clients WHERE id = :id', { id: t.client_id });
+  const client = await ctx.db.get<{ id: number; currency: string; archived_at: string | null; status: string }>('SELECT id, currency, archived_at, status FROM clients WHERE id = :id', { id: t.client_id });
   if (!client || client.archived_at || client.status === 'churned') return 'skipped';
   const key = `rule:${rule.id}:${occ}`;
-  if (ctx.db.get('SELECT 1 FROM projects WHERE recurrence_key = :key', { key })) return false;
+  if (await ctx.db.get('SELECT 1 FROM projects WHERE recurrence_key = :key', { key })) return false;
   const now = ctx.nowIso();
-  const editor = t.editor_id && ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: t.editor_id }) ? t.editor_id : null;
+  const editor = t.editor_id && await ctx.db.get('SELECT 1 FROM team_members WHERE id = :id', { id: t.editor_id }) ? t.editor_id : null;
   const name = renderTitle(rule.title, occ);
-  const projectId = ctx.db.insert('projects', {
+  const projectId = await ctx.db.insert('projects', {
     client_id: client.id,
     name,
     description: t.description ?? null,
@@ -148,8 +148,8 @@ function createProjectFor(ctx: AppContext, rule: RecurringRule, occ: ISODate, ac
     created_at: now,
     updated_at: now,
   });
-  (t.deliverables ?? []).forEach((d, i) => {
-    ctx.db.insert('deliverables', {
+  for (const [i, d] of (t.deliverables ?? []).entries()) {
+    await ctx.db.insert('deliverables', {
       project_id: projectId,
       title: renderTitle(d.title, occ),
       format: d.format ?? null,
@@ -161,8 +161,8 @@ function createProjectFor(ctx: AppContext, rule: RecurringRule, occ: ISODate, ac
       created_at: now,
       updated_at: now,
     });
-  });
-  logActivity(ctx, actor, {
+  }
+  await logActivity(ctx, actor, {
     entity_type: 'project',
     entity_id: projectId,
     client_id: client.id,
@@ -179,13 +179,13 @@ function createProjectFor(ctx: AppContext, rule: RecurringRule, occ: ISODate, ac
  * Idempotent: a unique key per rule and date prevents doubles. If the app was closed for a long time,
  * only the latest missed occurrence is created, not a flood of stale ones.
  */
-export function materializeRecurring(ctx: AppContext, actor: Actor = SYSTEM_ACTOR, onlyRuleId?: number): { tasks: number; projects: number; skipped: number } {
-  const today = ctx.today();
-  const rules = ctx.db.all<RecurringRule>(`SELECT * FROM recurring_rules WHERE active = 1 ${onlyRuleId ? 'AND id = :id' : ''}`, { id: onlyRuleId });
+export async function materializeRecurring(ctx: AppContext, actor: Actor = SYSTEM_ACTOR, onlyRuleId?: number): Promise<{ tasks: number; projects: number; skipped: number }> {
+  const today = await ctx.today();
+  const rules = await ctx.db.all<RecurringRule>(`SELECT * FROM recurring_rules WHERE active = 1 ${onlyRuleId ? 'AND id = :id' : ''}`, { id: onlyRuleId });
   const result = { tasks: 0, projects: 0, skipped: 0 };
   for (const rule of rules) {
     if (!isValidDate(rule.next_occurrence)) continue;
-    ctx.db.tx(() => {
+    await ctx.db.tx(async () => {
       let occ = rule.next_occurrence;
       let guard = 0;
       const horizon = addDays(today, rule.lead_days);
@@ -194,16 +194,16 @@ export function materializeRecurring(ctx: AppContext, actor: Actor = SYSTEM_ACTO
         const stale = next <= today;
         if (!stale) {
           if (rule.kind === 'task') {
-            if (createTaskFor(ctx, rule, occ)) result.tasks++;
+            if (await createTaskFor(ctx, rule, occ)) result.tasks++;
           } else {
-            const r = createProjectFor(ctx, rule, occ, actor);
+            const r = await createProjectFor(ctx, rule, occ, actor);
             if (r === true) result.projects++;
             else if (r === 'skipped') result.skipped++;
           }
         }
         occ = next;
       }
-      ctx.db.run('UPDATE recurring_rules SET next_occurrence = :occ, last_generated_at = :now, active = :active, updated_at = :now WHERE id = :id', {
+      await ctx.db.run('UPDATE recurring_rules SET next_occurrence = :occ, last_generated_at = :now, active = :active, updated_at = :now WHERE id = :id', {
         occ,
         now: ctx.nowIso(),
         active: rule.end_date && occ > rule.end_date ? 0 : 1,

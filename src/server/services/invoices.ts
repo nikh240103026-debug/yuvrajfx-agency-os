@@ -82,8 +82,8 @@ export type InvoiceFilters = {
   portal_only?: boolean;
 };
 
-export function listInvoices(ctx: AppContext, f: InvoiceFilters = {}): InvoiceListRow[] {
-  const today = ctx.today();
+export async function listInvoices(ctx: AppContext, f: InvoiceFilters = {}): Promise<InvoiceListRow[]> {
+  const today = await ctx.today();
   const where: string[] = ['1 = 1'];
   const params: Record<string, unknown> = { today };
   if (f.client_id) {
@@ -111,7 +111,7 @@ export function listInvoices(ctx: AppContext, f: InvoiceFilters = {}): InvoiceLi
     where.push(`(b.number LIKE :q OR c.name LIKE :q OR c.company LIKE :q OR p.name LIKE :q OR b.notes LIKE :q)`);
     params.q = `%${f.q}%`;
   }
-  const rows = ctx.db.all<InvoiceListRow>(
+  const rows = await ctx.db.all<InvoiceListRow>(
     `SELECT b.id, b.number, b.client_id, c.name AS client_name, c.company AS client_company, b.project_id, p.name AS project_name,
             b.kind, b.currency, b.issue_date, b.due_date, b.state, ${invoiceStatusSql('b')} AS status,
             b.total_minor, b.paid_minor, b.balance_minor, b.last_paid_at, b.sent_at, b.is_demo
@@ -148,28 +148,28 @@ type InvoiceRow = InvoiceListRow & {
   updated_at: string;
 };
 
-export function getInvoice(ctx: AppContext, id: number) {
-  const today = ctx.today();
-  const inv = ctx.db.get<InvoiceRow>(
+export async function getInvoice(ctx: AppContext, id: number) {
+  const today = await ctx.today();
+  const inv = await ctx.db.get<InvoiceRow>(
     `SELECT b.*, ${invoiceStatusSql('b')} AS status FROM invoice_balances b WHERE b.id = :id`,
     { id, today },
   );
   if (!inv) return null;
-  const items = ctx.db.all<{ id: number; description: string; quantity: number; unit_price_minor: number; amount_minor: number; service_type: string; sort_order: number }>(
+  const items = await ctx.db.all<{ id: number; description: string; quantity: number; unit_price_minor: number; amount_minor: number; service_type: string; sort_order: number }>(
     'SELECT id, description, quantity, unit_price_minor, amount_minor, service_type, sort_order FROM invoice_items WHERE invoice_id = :id ORDER BY sort_order, id',
     { id },
   );
-  const payments = ctx.db.all(
+  const payments = await ctx.db.all(
     `SELECT p.id, p.amount_minor, p.currency, p.paid_at, p.method, p.reference, p.notes, p.created_at, u.name AS recorded_by
        FROM payments p LEFT JOIN users u ON u.id = p.created_by
       WHERE p.invoice_id = :id ORDER BY p.paid_at, p.id`,
     { id },
   );
-  const client = ctx.db.get(
+  const client = await ctx.db.get(
     'SELECT id, name, company, email, phone, billing_address, tax_id, country, currency, payment_terms_days, is_demo FROM clients WHERE id = :id',
     { id: inv.client_id },
   );
-  const project = inv.project_id ? ctx.db.get('SELECT id, name, type FROM projects WHERE id = :id', { id: inv.project_id }) : null;
+  const project = inv.project_id ? await ctx.db.get('SELECT id, name, type FROM projects WHERE id = :id', { id: inv.project_id }) : null;
   const taxes = json<TaxLine[]>(inv.taxes, []);
   const totals = computeInvoiceTotals({
     items,
@@ -191,25 +191,25 @@ export function getInvoice(ctx: AppContext, id: number) {
   };
 }
 
-function nextNumber(ctx: AppContext): { number: string; seq: number } {
-  const s = ctx.settings();
+async function nextNumber(ctx: AppContext): Promise<{ number: string; seq: number }> {
+  const s = await ctx.settings();
   let seq = Math.max(1, Math.floor(s.invoice_next_number || 1));
   for (let i = 0; i < 100_000; i++, seq++) {
     const number = `${s.invoice_prefix}${String(seq).padStart(Math.min(Math.max(s.invoice_number_padding, 1), 8), '0')}`;
-    if (!ctx.db.get('SELECT 1 FROM invoices WHERE number = :number', { number })) return { number, seq };
+    if (!await ctx.db.get('SELECT 1 FROM invoices WHERE number = :number', { number })) return { number, seq };
   }
   throw conflict('Could not allocate an invoice number. Check the numbering settings.');
 }
 
-export function previewNextNumber(ctx: AppContext): string {
-  return nextNumber(ctx).number;
+export async function previewNextNumber(ctx: AppContext): Promise<string> {
+  return (await nextNumber(ctx)).number;
 }
 
-function validateRefs(ctx: AppContext, input: InvoiceInput): void {
-  const client = ctx.db.get<{ id: number; archived_at: string | null }>('SELECT id, archived_at FROM clients WHERE id = :id', { id: input.client_id });
+async function validateRefs(ctx: AppContext, input: InvoiceInput): Promise<void> {
+  const client = await ctx.db.get<{ id: number; archived_at: string | null }>('SELECT id, archived_at FROM clients WHERE id = :id', { id: input.client_id });
   if (!client) throw badRequest('Pick an existing client.');
   if (input.project_id) {
-    const project = ctx.db.get<{ client_id: number }>('SELECT client_id FROM projects WHERE id = :id', { id: input.project_id });
+    const project = await ctx.db.get<{ client_id: number }>('SELECT client_id FROM projects WHERE id = :id', { id: input.project_id });
     if (!project) throw badRequest('That project no longer exists.');
     if (project.client_id !== input.client_id) throw badRequest('That project belongs to a different client.');
   }
@@ -220,10 +220,10 @@ function validateRefs(ctx: AppContext, input: InvoiceInput): void {
   }
 }
 
-function writeItems(ctx: AppContext, invoiceId: number, items: InvoiceItemInput[], amounts: { amount_minor: number }[]): void {
-  ctx.db.run('DELETE FROM invoice_items WHERE invoice_id = :id', { id: invoiceId });
-  items.forEach((it, idx) => {
-    ctx.db.insert('invoice_items', {
+async function writeItems(ctx: AppContext, invoiceId: number, items: InvoiceItemInput[], amounts: { amount_minor: number }[]): Promise<void> {
+  await ctx.db.run('DELETE FROM invoice_items WHERE invoice_id = :id', { id: invoiceId });
+  for (const [idx, it] of items.entries()) {
+    await ctx.db.insert('invoice_items', {
       invoice_id: invoiceId,
       description: it.description,
       quantity: it.quantity,
@@ -232,20 +232,20 @@ function writeItems(ctx: AppContext, invoiceId: number, items: InvoiceItemInput[
       service_type: it.service_type,
       sort_order: idx,
     });
-  });
+  }
 }
 
-export function createInvoice(ctx: AppContext, actor: Actor, input: InvoiceInput, opts: { is_demo?: number } = {}): number {
-  validateRefs(ctx, input);
+export async function createInvoice(ctx: AppContext, actor: Actor, input: InvoiceInput, opts: { is_demo?: number } = {}): Promise<number> {
+  await validateRefs(ctx, input);
   const totals = computeInvoiceTotals(input);
-  return ctx.db.tx(() => {
+  return ctx.db.tx(async () => {
     let number = input.number?.trim() || null;
     let seq: number | null = null;
-    if (!number) ({ number, seq } = nextNumber(ctx));
+    if (!number) ({ number, seq } = await nextNumber(ctx));
     const now = ctx.nowIso();
     let id: number;
     try {
-      id = ctx.db.insert('invoices', {
+      id = await ctx.db.insert('invoices', {
         number,
         client_id: input.client_id,
         project_id: input.project_id,
@@ -275,12 +275,12 @@ export function createInvoice(ctx: AppContext, actor: Actor, input: InvoiceInput
     } catch (err) {
       translateDbError(err);
     }
-    writeItems(ctx, id, input.items, totals.lines);
+    await writeItems(ctx, id, input.items, totals.lines);
     if (seq !== null) {
-      writeSettings(ctx.db, { invoice_next_number: seq + 1 });
+      await writeSettings(ctx.db, { invoice_next_number: seq + 1 });
       ctx.invalidateSettings();
     }
-    logActivity(ctx, actor, {
+    await logActivity(ctx, actor, {
       entity_type: 'invoice',
       entity_id: id,
       client_id: input.client_id,
@@ -293,15 +293,15 @@ export function createInvoice(ctx: AppContext, actor: Actor, input: InvoiceInput
   });
 }
 
-export function updateInvoice(ctx: AppContext, actor: Actor, id: number, input: InvoiceInput): void {
-  const existing = ctx.db.get<{ id: number; state: string; number: string; client_id: number }>('SELECT id, state, number, client_id FROM invoices WHERE id = :id', { id });
+export async function updateInvoice(ctx: AppContext, actor: Actor, id: number, input: InvoiceInput): Promise<void> {
+  const existing = await ctx.db.get<{ id: number; state: string; number: string; client_id: number }>('SELECT id, state, number, client_id FROM invoices WHERE id = :id', { id });
   if (!existing) throw notFound('Invoice');
   if (existing.state === 'void') throw conflict('Void invoices cannot be edited.');
-  validateRefs(ctx, input);
+  await validateRefs(ctx, input);
   const totals = computeInvoiceTotals(input);
-  ctx.db.tx(() => {
+  await ctx.db.tx(async () => {
     try {
-      ctx.db.update('invoices', id, {
+      await ctx.db.update('invoices', id, {
         number: input.number?.trim() || existing.number,
         client_id: input.client_id,
         project_id: input.project_id,
@@ -327,8 +327,8 @@ export function updateInvoice(ctx: AppContext, actor: Actor, id: number, input: 
     } catch (err) {
       translateDbError(err);
     }
-    writeItems(ctx, id, input.items, totals.lines);
-    logActivity(ctx, actor, {
+    await writeItems(ctx, id, input.items, totals.lines);
+    await logActivity(ctx, actor, {
       entity_type: 'invoice',
       entity_id: id,
       client_id: input.client_id,
@@ -340,17 +340,17 @@ export function updateInvoice(ctx: AppContext, actor: Actor, id: number, input: 
 }
 
 /** Records that the owner sent the invoice themselves. Nothing is emailed from here. */
-export function markInvoiceSent(ctx: AppContext, actor: Actor, id: number): void {
-  const inv = ctx.db.get<{ state: string; number: string; client_id: number; project_id: number | null; total_minor: number; is_demo: number }>(
+export async function markInvoiceSent(ctx: AppContext, actor: Actor, id: number): Promise<void> {
+  const inv = await ctx.db.get<{ state: string; number: string; client_id: number; project_id: number | null; total_minor: number; is_demo: number }>(
     'SELECT state, number, client_id, project_id, total_minor, is_demo FROM invoices WHERE id = :id',
     { id },
   );
   if (!inv) throw notFound('Invoice');
   if (inv.state === 'void') throw conflict('Void invoices cannot be sent.');
   if (inv.state === 'sent') return;
-  ctx.db.tx(() => {
-    ctx.db.run('UPDATE invoices SET state = :state, sent_at = :at, updated_at = :at WHERE id = :id', { state: 'sent', at: ctx.nowIso(), id });
-    logActivity(ctx, actor, {
+  await ctx.db.tx(async () => {
+    await ctx.db.run('UPDATE invoices SET state = :state, sent_at = :at, updated_at = :at WHERE id = :id', { state: 'sent', at: ctx.nowIso(), id });
+    await logActivity(ctx, actor, {
       entity_type: 'invoice',
       entity_id: id,
       client_id: inv.client_id,
@@ -362,50 +362,50 @@ export function markInvoiceSent(ctx: AppContext, actor: Actor, id: number): void
   });
 }
 
-export function revertInvoiceToDraft(ctx: AppContext, actor: Actor, id: number): void {
-  const inv = ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
+export async function revertInvoiceToDraft(ctx: AppContext, actor: Actor, id: number): Promise<void> {
+  const inv = await ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
   if (!inv) throw notFound('Invoice');
   if (inv.state !== 'sent') throw conflict('Only sent invoices can go back to draft.');
-  ctx.db.tx(() => {
+  await ctx.db.tx(async () => {
     try {
-      ctx.db.run(`UPDATE invoices SET state = 'draft', sent_at = NULL, updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), id });
+      await ctx.db.run(`UPDATE invoices SET state = 'draft', sent_at = NULL, updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), id });
     } catch (err) {
       translateDbError(err);
     }
-    logActivity(ctx, actor, { entity_type: 'invoice', entity_id: id, client_id: inv.client_id, action: 'reverted', summary: `Invoice ${inv.number} moved back to draft` });
+    await logActivity(ctx, actor, { entity_type: 'invoice', entity_id: id, client_id: inv.client_id, action: 'reverted', summary: `Invoice ${inv.number} moved back to draft` });
   });
 }
 
-export function voidInvoice(ctx: AppContext, actor: Actor, id: number, reason: string | null): void {
-  const inv = ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
+export async function voidInvoice(ctx: AppContext, actor: Actor, id: number, reason: string | null): Promise<void> {
+  const inv = await ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
   if (!inv) throw notFound('Invoice');
   if (inv.state === 'void') return;
-  ctx.db.tx(() => {
+  await ctx.db.tx(async () => {
     try {
-      ctx.db.run(`UPDATE invoices SET state = 'void', voided_at = :at, void_reason = :reason, updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), reason, id });
+      await ctx.db.run(`UPDATE invoices SET state = 'void', voided_at = :at, void_reason = :reason, updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), reason, id });
     } catch (err) {
       translateDbError(err);
     }
-    logActivity(ctx, actor, { entity_type: 'invoice', entity_id: id, client_id: inv.client_id, action: 'voided', summary: `Invoice ${inv.number} voided${reason ? `: ${reason}` : ''}` });
+    await logActivity(ctx, actor, { entity_type: 'invoice', entity_id: id, client_id: inv.client_id, action: 'voided', summary: `Invoice ${inv.number} voided${reason ? `: ${reason}` : ''}` });
   });
 }
 
-export function deleteInvoice(ctx: AppContext, actor: Actor, id: number): void {
-  const inv = ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
+export async function deleteInvoice(ctx: AppContext, actor: Actor, id: number): Promise<void> {
+  const inv = await ctx.db.get<{ state: string; number: string; client_id: number }>('SELECT state, number, client_id FROM invoices WHERE id = :id', { id });
   if (!inv) throw notFound('Invoice');
   if (inv.state !== 'draft') throw conflict('Only drafts can be deleted. Void a sent invoice instead, so your records stay complete.');
-  if (ctx.db.get('SELECT 1 FROM payments WHERE invoice_id = :id', { id })) throw conflict('This draft has payments recorded.');
-  ctx.db.tx(() => {
-    ctx.db.run('DELETE FROM invoices WHERE id = :id', { id });
-    logActivity(ctx, actor, { entity_type: 'invoice', entity_id: id, client_id: inv.client_id, action: 'deleted', summary: `Draft invoice ${inv.number} deleted` });
+  if (await ctx.db.get('SELECT 1 FROM payments WHERE invoice_id = :id', { id })) throw conflict('This draft has payments recorded.');
+  await ctx.db.tx(async () => {
+    await ctx.db.run('DELETE FROM invoices WHERE id = :id', { id });
+    await logActivity(ctx, actor, { entity_type: 'invoice', entity_id: id, client_id: inv.client_id, action: 'deleted', summary: `Draft invoice ${inv.number} deleted` });
   });
 }
 
-export function duplicateInvoice(ctx: AppContext, actor: Actor, id: number): number {
-  const inv = getInvoice(ctx, id);
+export async function duplicateInvoice(ctx: AppContext, actor: Actor, id: number): Promise<number> {
+  const inv = await getInvoice(ctx, id);
   if (!inv) throw notFound('Invoice');
-  const today = ctx.today();
-  const terms = (inv.client as { payment_terms_days?: number } | undefined)?.payment_terms_days ?? ctx.settings().default_payment_terms_days;
+  const today = await ctx.today();
+  const terms = (inv.client as { payment_terms_days?: number } | undefined)?.payment_terms_days ?? (await ctx.settings()).default_payment_terms_days;
   return createInvoice(ctx, actor, {
     client_id: inv.client_id,
     project_id: inv.project_id,
@@ -441,8 +441,8 @@ export type PaymentInput = {
  * Record a (partial or full) payment. The invoice only becomes "paid" when payments cover the total;
  * overpayment is refused here and again by a database trigger.
  */
-export function recordPayment(ctx: AppContext, actor: Actor, invoiceId: number, input: PaymentInput, opts: { is_demo?: number } = {}): { id: number; status: InvoiceStatus; balance_minor: number } {
-  const inv = ctx.db.get<{ id: number; number: string; state: string; currency: string; client_id: number; project_id: number | null; total_minor: number; paid_minor: number; balance_minor: number; issue_date: string; is_demo: number }>(
+export async function recordPayment(ctx: AppContext, actor: Actor, invoiceId: number, input: PaymentInput, opts: { is_demo?: number } = {}): Promise<{ id: number; status: InvoiceStatus; balance_minor: number }> {
+  const inv = await ctx.db.get<{ id: number; number: string; state: string; currency: string; client_id: number; project_id: number | null; total_minor: number; paid_minor: number; balance_minor: number; issue_date: string; is_demo: number }>(
     'SELECT id, number, state, currency, client_id, project_id, total_minor, paid_minor, balance_minor, issue_date, is_demo FROM invoice_balances WHERE id = :id',
     { id: invoiceId },
   );
@@ -455,11 +455,11 @@ export function recordPayment(ctx: AppContext, actor: Actor, invoiceId: number, 
       `That payment (${formatMoney(input.amount_minor, inv.currency, { decimals: 'always' })}) is more than the outstanding balance of ${formatMoney(inv.balance_minor, inv.currency, { decimals: 'always' })}.`,
     );
   }
-  if (input.paid_at > ctx.today()) throw badRequest('The payment date cannot be in the future.');
-  return ctx.db.tx(() => {
+  if (input.paid_at > await ctx.today()) throw badRequest('The payment date cannot be in the future.');
+  return ctx.db.tx(async () => {
     if (inv.state === 'draft') {
-      ctx.db.run(`UPDATE invoices SET state = 'sent', sent_at = COALESCE(sent_at, :at), updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), id: invoiceId });
-      logActivity(ctx, actor, {
+      await ctx.db.run(`UPDATE invoices SET state = 'sent', sent_at = COALESCE(sent_at, :at), updated_at = :at WHERE id = :id`, { at: ctx.nowIso(), id: invoiceId });
+      await logActivity(ctx, actor, {
         entity_type: 'invoice',
         entity_id: invoiceId,
         client_id: inv.client_id,
@@ -470,7 +470,7 @@ export function recordPayment(ctx: AppContext, actor: Actor, invoiceId: number, 
     }
     let id: number;
     try {
-      id = ctx.db.insert('payments', {
+      id = await ctx.db.insert('payments', {
         invoice_id: invoiceId,
         client_id: inv.client_id,
         amount_minor: input.amount_minor,
@@ -486,11 +486,11 @@ export function recordPayment(ctx: AppContext, actor: Actor, invoiceId: number, 
     } catch (err) {
       translateDbError(err);
     }
-    const after = ctx.db.get<{ status: InvoiceStatus; balance_minor: number }>(
+    const after = await ctx.db.get<{ status: InvoiceStatus; balance_minor: number }>(
       `SELECT ${invoiceStatusSql('b')} AS status, b.balance_minor FROM invoice_balances b WHERE b.id = :id`,
-      { id: invoiceId, today: ctx.today() },
+      { id: invoiceId, today: await ctx.today() },
     )!;
-    logActivity(ctx, actor, {
+    await logActivity(ctx, actor, {
       entity_type: 'payment',
       entity_id: id,
       client_id: inv.client_id,
@@ -504,15 +504,15 @@ export function recordPayment(ctx: AppContext, actor: Actor, invoiceId: number, 
   });
 }
 
-export function deletePayment(ctx: AppContext, actor: Actor, paymentId: number): void {
-  const p = ctx.db.get<{ id: number; invoice_id: number; amount_minor: number; currency: string; client_id: number; number: string }>(
+export async function deletePayment(ctx: AppContext, actor: Actor, paymentId: number): Promise<void> {
+  const p = await ctx.db.get<{ id: number; invoice_id: number; amount_minor: number; currency: string; client_id: number; number: string }>(
     'SELECT p.id, p.invoice_id, p.amount_minor, p.currency, p.client_id, i.number FROM payments p JOIN invoices i ON i.id = p.invoice_id WHERE p.id = :id',
     { id: paymentId },
   );
   if (!p) throw notFound('Payment');
-  ctx.db.tx(() => {
-    ctx.db.run('DELETE FROM payments WHERE id = :id', { id: paymentId });
-    logActivity(ctx, actor, {
+  await ctx.db.tx(async () => {
+    await ctx.db.run('DELETE FROM payments WHERE id = :id', { id: paymentId });
+    await logActivity(ctx, actor, {
       entity_type: 'payment',
       entity_id: paymentId,
       client_id: p.client_id,
@@ -543,21 +543,21 @@ type RetainerClient = {
  * Which active retainer clients are due an invoice for the period starting in `month` (YYYY-MM),
  * and whether one already exists. Quarterly/yearly retainers are due only in their cycle months.
  */
-export function retainerDraftPreview(ctx: AppContext, month: string) {
+export async function retainerDraftPreview(ctx: AppContext, month: string) {
   const periodStart = `${month}-01`;
-  const clients = ctx.db.all<RetainerClient>(
+  const clients = await ctx.db.all<RetainerClient>(
     `SELECT id, name, company, retainer_minor, currency, billing_cycle, billing_day, contract_start, service_package, payment_terms_days, is_demo
        FROM clients
       WHERE status = 'active' AND archived_at IS NULL AND retainer_minor > 0
       ORDER BY COALESCE(company, name)`,
   );
-  return clients
-    .map((c) => {
+  return (await Promise.all(clients
+    .map(async (c) => {
       const cycle = BILLING_CYCLE_MONTHS[c.billing_cycle];
       const anchor = c.contract_start ? c.contract_start.slice(0, 7) : month;
       const monthsFromAnchor = (Number(month.slice(0, 4)) - Number(anchor.slice(0, 4))) * 12 + (Number(month.slice(5, 7)) - Number(anchor.slice(5, 7)));
       const due = monthsFromAnchor >= 0 && monthsFromAnchor % cycle === 0;
-      const existing = ctx.db.get<{ id: number; number: string }>(
+      const existing = await ctx.db.get<{ id: number; number: string }>(
         `SELECT id, number FROM invoices WHERE client_id = :id AND kind = 'retainer' AND period_start = :ps AND state <> 'void'`,
         { id: c.id, ps: periodStart },
       );
@@ -573,21 +573,21 @@ export function retainerDraftPreview(ctx: AppContext, month: string) {
         existing_invoice: existing ?? null,
         is_demo: c.is_demo,
       };
-    })
+    })))
     .filter((c) => c.due);
 }
 
-export function createRetainerDrafts(ctx: AppContext, actor: Actor, month: string, clientIds?: number[]): number[] {
-  const preview = retainerDraftPreview(ctx, month).filter((p) => !p.existing_invoice && (!clientIds || clientIds.includes(p.client_id)));
+export async function createRetainerDrafts(ctx: AppContext, actor: Actor, month: string, clientIds?: number[]): Promise<number[]> {
+  const preview = (await retainerDraftPreview(ctx, month)).filter((p) => !p.existing_invoice && (!clientIds || clientIds.includes(p.client_id)));
   const created: number[] = [];
-  const today = ctx.today();
-  ctx.db.tx(() => {
+  const today = await ctx.today();
+  await ctx.db.tx(async () => {
     for (const p of preview) {
-      const c = ctx.db.get<RetainerClient>('SELECT * FROM clients WHERE id = :id', { id: p.client_id })!;
+      const c = (await ctx.db.get<RetainerClient>('SELECT * FROM clients WHERE id = :id', { id: p.client_id }))!;
       const issue = today > p.period_start ? today : p.period_start;
       const label = p.billing_cycle === 'monthly' ? monthLabel(month, 'long') : `${monthLabel(month, 'long')} – ${monthLabel(p.period_end.slice(0, 7), 'long')}`;
       created.push(
-        createInvoice(
+        await createInvoice(
           ctx,
           actor,
           {
@@ -602,9 +602,9 @@ export function createRetainerDrafts(ctx: AppContext, actor: Actor, month: strin
             discount_type: 'none',
             discount_percent: 0,
             discount_fixed_minor: 0,
-            taxes: ctx.settings().default_taxes,
+            taxes: (await ctx.settings()).default_taxes,
             notes: null,
-            terms: ctx.settings().default_invoice_terms || null,
+            terms: (await ctx.settings()).default_invoice_terms || null,
             internal_notes: 'Drafted from the retainer schedule. Review before sending.',
             items: [
               {

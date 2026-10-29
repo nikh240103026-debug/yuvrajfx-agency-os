@@ -50,9 +50,9 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[];
 
-export function readSettings(db: Db): Settings {
+export async function readSettings(db: Db): Promise<Settings> {
   const out: Record<string, unknown> = { ...DEFAULT_SETTINGS };
-  for (const row of db.all<{ key: string; value: string }>('SELECT key, value FROM settings')) {
+  for (const row of await db.all<{ key: string; value: string }>('SELECT key, value FROM settings')) {
     if (!(row.key in DEFAULT_SETTINGS)) continue;
     try {
       out[row.key] = JSON.parse(row.value);
@@ -63,11 +63,11 @@ export function readSettings(db: Db): Settings {
   return out as Settings;
 }
 
-export function writeSettings(db: Db, patch: Partial<Settings>): void {
-  db.tx(() => {
+export async function writeSettings(db: Db, patch: Partial<Settings>): Promise<void> {
+  await db.tx(async () => {
     for (const [key, value] of Object.entries(patch)) {
       if (!(key in DEFAULT_SETTINGS) || value === undefined) continue;
-      db.run('INSERT INTO settings (key, value) VALUES (:key, :value) ON CONFLICT(key) DO UPDATE SET value = excluded.value', {
+      await db.run('INSERT INTO settings (key, value) VALUES (:key, :value) ON CONFLICT(key) DO UPDATE SET value = excluded.value', {
         key,
         value: JSON.stringify(value),
       });

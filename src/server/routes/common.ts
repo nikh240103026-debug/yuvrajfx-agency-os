@@ -3,9 +3,9 @@ import { isAdmin } from '../lib/auth.ts';
 import { csvFilename } from '../lib/csv.ts';
 import type { AppContext } from '../context.ts';
 
-export function sendCsv(ctx: AppContext, res: Response, base: string, csv: string): void {
+export async function sendCsv(ctx: AppContext, res: Response, base: string, csv: string): Promise<void> {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${csvFilename(base, ctx.today())}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${csvFilename(base, await ctx.today())}"`);
   res.setHeader('Cache-Control', 'no-store');
   res.send(csv);
 }

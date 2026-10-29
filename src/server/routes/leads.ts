@@ -69,17 +69,17 @@ const activitySchema = z.object({
   advance_stage: z.boolean().optional(),
 });
 
-function changeStage(ctx: AppContext, actor: Actor, id: number, from: LeadStage, to: LeadStage, label: string, isDemo: number): void {
+async function changeStage(ctx: AppContext, actor: Actor, id: number, from: LeadStage, to: LeadStage, label: string, isDemo: number): Promise<void> {
   if (from === to) return;
   const now = ctx.nowIso();
-  ctx.db.run('UPDATE leads SET stage = :to, stage_changed_at = :now, closed_at = :closed, updated_at = :now WHERE id = :id', {
+  await ctx.db.run('UPDATE leads SET stage = :to, stage_changed_at = :now, closed_at = :closed, updated_at = :now WHERE id = :id', {
     to,
     now,
     closed: to === 'won' || to === 'lost' ? now : null,
     id,
   });
-  ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: from, to_stage: to, changed_at: now });
-  logActivity(ctx, actor, {
+  await ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: from, to_stage: to, changed_at: now });
+  await logActivity(ctx, actor, {
     entity_type: 'lead',
     entity_id: id,
     action: to === 'won' ? 'won' : to === 'lost' ? 'lost' : 'stage_changed',
@@ -91,9 +91,9 @@ function changeStage(ctx: AppContext, actor: Actor, id: number, from: LeadStage,
 export function leadsRouter(ctx: AppContext): Router {
   const r = Router();
 
-  function list(q: z.output<typeof listQuery>) {
+  async function list(q: z.output<typeof listQuery>) {
     const where: string[] = ['1 = 1'];
-    const params: Record<string, unknown> = { today: ctx.today() };
+    const params: Record<string, unknown> = { today: await ctx.today() };
     if (q.stage) {
       where.push('l.stage = :stage');
       params.stage = q.stage;
@@ -115,7 +115,7 @@ export function leadsRouter(ctx: AppContext): Router {
       where.push('(l.name LIKE :q OR l.company LIKE :q OR l.email LIKE :q OR l.website LIKE :q OR l.notes LIKE :q OR l.social_url LIKE :q)');
       params.q = likeParam(q.q);
     }
-    return ctx.db
+    return await (await ctx.db
       .all<Record<string, unknown>>(
         `SELECT l.*, (l.next_follow_up IS NOT NULL AND l.next_follow_up < :today AND l.stage NOT IN ('won','lost')) AS follow_up_overdue,
                 (l.next_follow_up = :today AND l.stage NOT IN ('won','lost')) AS follow_up_today,
@@ -123,21 +123,21 @@ export function leadsRouter(ctx: AppContext): Router {
            FROM leads l WHERE ${where.join(' AND ')}
           ORDER BY CASE WHEN l.stage IN ('won','lost') THEN 1 ELSE 0 END, COALESCE(l.next_follow_up, '9999-12-31'), l.updated_at DESC`,
         params,
-      )
+      ))
       .map((l) => withJson(l, { tags: [] }));
   }
 
-  r.get('/', (req, res) => {
-    res.json({ leads: list(parse(listQuery, req.query)) });
+  r.get('/', async (req, res) => {
+    res.json({ leads: await list(parse(listQuery, req.query)) });
   });
 
-  r.get('/metrics', (req, res) => {
+  r.get('/metrics', async (req, res) => {
     const q = parse(z.object({ from: qStr(), to: qStr() }), req.query);
-    res.json(pipelineMetrics(ctx, q));
+    res.json(await pipelineMetrics(ctx, q));
   });
 
-  r.get('/export.csv', (req, res) => {
-    const rows = list(parse(listQuery, req.query));
+  r.get('/export.csv', async (req, res) => {
+    const rows = await list(parse(listQuery, req.query));
     const csv = toCsv(rows, [
       { header: 'Name', value: (l) => l.name },
       { header: 'Company', value: (l) => l.company },
@@ -158,10 +158,10 @@ export function leadsRouter(ctx: AppContext): Router {
       { header: 'Created', value: (l) => String(l.created_at).slice(0, 10) },
       { header: 'Demo data', value: (l) => (l.is_demo ? 'yes' : '') },
     ]);
-    sendCsv(ctx, res, 'pipeline', csv);
+    await sendCsv(ctx, res, 'pipeline', csv);
   });
 
-  r.post('/check-duplicates', (req, res) => {
+  r.post('/check-duplicates', async (req, res) => {
     const body = parse(
       z.object({
         name: z.string().max(200).nullish(),
@@ -174,7 +174,7 @@ export function leadsRouter(ctx: AppContext): Router {
       }),
       req.body,
     );
-    res.json({ duplicates: findDuplicates(ctx, body, { excludeLeadId: body.exclude_id }) });
+    res.json({ duplicates: await findDuplicates(ctx, body, { excludeLeadId: body.exclude_id }) });
   });
 
   const importSchema = z.object({
@@ -184,48 +184,48 @@ export function leadsRouter(ctx: AppContext): Router {
     skip_rows: z.array(z.number().int()).max(5000).optional(),
   });
 
-  r.post('/import/preview', (req, res) => {
+  r.post('/import/preview', async (req, res) => {
     const body = parse(importSchema, req.body);
-    const cur = body.default_currency && isValidCurrency(body.default_currency) ? body.default_currency : ctx.settings().base_currency;
-    const preview = previewLeadImport(ctx, body.csv, cur);
+    const cur = body.default_currency && isValidCurrency(body.default_currency) ? body.default_currency : (await ctx.settings()).base_currency;
+    const preview = await previewLeadImport(ctx, body.csv, cur);
     if (preview.rows.length === 0) throw badRequest('No data rows found. The first row must be column headers.');
     res.json(preview);
   });
 
   /** Imports only rows the owner supplied in the CSV; nothing is invented or enriched. */
-  r.post('/import', (req, res) => {
+  r.post('/import', async (req, res) => {
     const body = parse(importSchema, req.body);
-    const cur = body.default_currency && isValidCurrency(body.default_currency) ? body.default_currency : ctx.settings().base_currency;
-    const preview = previewLeadImport(ctx, body.csv, cur);
+    const cur = body.default_currency && isValidCurrency(body.default_currency) ? body.default_currency : (await ctx.settings()).base_currency;
+    const preview = await previewLeadImport(ctx, body.csv, cur);
     const skip = new Set(body.skip_rows ?? []);
     const actor = actorOf(req);
     let imported = 0;
     let skipped = 0;
-    ctx.db.tx(() => {
+    await ctx.db.tx(async () => {
       for (const row of preview.rows) {
         if (!row.lead || skip.has(row.row) || (body.skip_duplicates !== false && (row.duplicates.length > 0 || row.duplicate_in_file))) {
           skipped++;
           continue;
         }
         const now = ctx.nowIso();
-        const id = ctx.db.insert('leads', { ...row.lead, stage_changed_at: now, closed_at: row.lead.stage === 'won' || row.lead.stage === 'lost' ? now : null, created_at: now, updated_at: now });
-        ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: null, to_stage: row.lead.stage, changed_at: now });
+        const id = await ctx.db.insert('leads', { ...row.lead, stage_changed_at: now, closed_at: row.lead.stage === 'won' || row.lead.stage === 'lost' ? now : null, created_at: now, updated_at: now });
+        await ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: null, to_stage: row.lead.stage, changed_at: now });
         imported++;
       }
-      if (imported) logActivity(ctx, actor, { entity_type: 'lead', entity_id: null, action: 'imported', summary: `${imported} lead${imported === 1 ? '' : 's'} imported from CSV` });
+      if (imported) await logActivity(ctx, actor, { entity_type: 'lead', entity_id: null, action: 'imported', summary: `${imported} lead${imported === 1 ? '' : 's'} imported from CSV` });
     });
     res.json({ imported, skipped });
   });
 
-  r.post('/', (req, res) => {
+  r.post('/', async (req, res) => {
     const body = parse(createSchema, req.body);
     const { force, ...data } = body;
-    const duplicates = findDuplicates(ctx, data);
+    const duplicates = await findDuplicates(ctx, data);
     if (duplicates.length && !force) throw conflict('This looks like someone already in your pipeline or client list.', { duplicates });
     const now = ctx.nowIso();
     const stage = data.stage ?? 'lead';
-    const id = ctx.db.tx(() => {
-      const id = ctx.db.insert('leads', {
+    const id = await ctx.db.tx(async () => {
+      const id = await ctx.db.insert('leads', {
         ...data,
         stage,
         source: data.source ?? 'other',
@@ -235,8 +235,8 @@ export function leadsRouter(ctx: AppContext): Router {
         created_at: now,
         updated_at: now,
       });
-      ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: null, to_stage: stage, changed_at: now });
-      logActivity(ctx, actorOf(req), {
+      await ctx.db.insert('lead_stage_history', { lead_id: id, from_stage: null, to_stage: stage, changed_at: now });
+      await logActivity(ctx, actorOf(req), {
         entity_type: 'lead',
         entity_id: id,
         action: 'created',
@@ -247,58 +247,58 @@ export function leadsRouter(ctx: AppContext): Router {
     res.status(201).json({ id, duplicates });
   });
 
-  r.get('/:id', (req, res) => {
+  r.get('/:id', async (req, res) => {
     const id = idParam(req);
-    const row = ctx.db.get<Record<string, unknown>>('SELECT * FROM leads WHERE id = :id', { id });
+    const row = await ctx.db.get<Record<string, unknown>>('SELECT * FROM leads WHERE id = :id', { id });
     if (!row) throw notFound('Lead');
     const lead = withJson(row, { tags: [] });
-    const outreach = ctx.db.all(
+    const outreach = await ctx.db.all(
       `SELECT c.*, u.name AS created_by_name FROM communications c LEFT JOIN users u ON u.id = c.created_by
         WHERE c.lead_id = :id ORDER BY c.occurred_at DESC, c.id DESC`,
       { id },
     );
-    const history = ctx.db.all('SELECT * FROM lead_stage_history WHERE lead_id = :id ORDER BY changed_at, id', { id });
-    const duplicates = findDuplicates(ctx, lead as never, { excludeLeadId: id });
-    const client = lead.client_id ? ctx.db.get('SELECT id, name, company FROM clients WHERE id = :id', { id: lead.client_id }) : null;
+    const history = await ctx.db.all('SELECT * FROM lead_stage_history WHERE lead_id = :id ORDER BY changed_at, id', { id });
+    const duplicates = await findDuplicates(ctx, lead as never, { excludeLeadId: id });
+    const client = lead.client_id ? await ctx.db.get('SELECT id, name, company FROM clients WHERE id = :id', { id: lead.client_id }) : null;
     res.json({ lead, outreach, history, duplicates, client });
   });
 
-  r.patch('/:id', (req, res) => {
+  r.patch('/:id', async (req, res) => {
     const id = idParam(req);
-    const existing = ctx.db.get<{ stage: LeadStage; name: string; company: string | null; is_demo: number }>('SELECT stage, name, company, is_demo FROM leads WHERE id = :id', { id });
+    const existing = await ctx.db.get<{ stage: LeadStage; name: string; company: string | null; is_demo: number }>('SELECT stage, name, company, is_demo FROM leads WHERE id = :id', { id });
     if (!existing) throw notFound('Lead');
     const body = parse(updateSchema, req.body);
     const { stage, ...rest } = body;
-    ctx.db.tx(() => {
-      if (Object.keys(rest).length) ctx.db.update('leads', id, { ...rest, updated_at: ctx.nowIso() });
-      if (stage) changeStage(ctx, actorOf(req), id, existing.stage, stage, rest.company ?? existing.company ?? rest.name ?? existing.name, existing.is_demo);
+    await ctx.db.tx(async () => {
+      if (Object.keys(rest).length) await ctx.db.update('leads', id, { ...rest, updated_at: ctx.nowIso() });
+      if (stage) await changeStage(ctx, actorOf(req), id, existing.stage, stage, rest.company ?? existing.company ?? rest.name ?? existing.name, existing.is_demo);
     });
     res.json({ ok: true });
   });
 
-  r.delete('/:id', (req, res) => {
+  r.delete('/:id', async (req, res) => {
     const id = idParam(req);
-    const l = ctx.db.get<{ name: string }>('SELECT name FROM leads WHERE id = :id', { id });
+    const l = await ctx.db.get<{ name: string }>('SELECT name FROM leads WHERE id = :id', { id });
     if (!l) throw notFound('Lead');
-    ctx.db.tx(() => {
-      ctx.db.run('DELETE FROM leads WHERE id = :id', { id });
-      logActivity(ctx, actorOf(req), { entity_type: 'lead', entity_id: id, action: 'deleted', summary: `Lead ${l.name} deleted` });
+    await ctx.db.tx(async () => {
+      await ctx.db.run('DELETE FROM leads WHERE id = :id', { id });
+      await logActivity(ctx, actorOf(req), { entity_type: 'lead', entity_id: id, action: 'deleted', summary: `Lead ${l.name} deleted` });
     });
     res.json({ ok: true });
   });
 
   /** Log outreach (a call, email, DM…) that happened outside the app. Nothing is sent. */
-  r.post('/:id/activities', (req, res) => {
+  r.post('/:id/activities', async (req, res) => {
     const id = idParam(req);
-    const lead = ctx.db.get<{ stage: LeadStage; name: string; company: string | null; last_contact_at: string | null; is_demo: number }>(
+    const lead = await ctx.db.get<{ stage: LeadStage; name: string; company: string | null; last_contact_at: string | null; is_demo: number }>(
       'SELECT stage, name, company, last_contact_at, is_demo FROM leads WHERE id = :id',
       { id },
     );
     if (!lead) throw notFound('Lead');
     const body = parse(activitySchema, req.body);
     const direction = body.direction ?? 'outbound';
-    const commId = ctx.db.tx(() => {
-      const commId = ctx.db.insert('communications', {
+    const commId = await ctx.db.tx(async () => {
+      const commId = await ctx.db.insert('communications', {
         lead_id: id,
         channel: body.channel,
         direction,
@@ -311,42 +311,42 @@ export function leadsRouter(ctx: AppContext): Router {
       const patch: Record<string, unknown> = { updated_at: ctx.nowIso() };
       if (direction !== 'internal' && body.channel !== 'note' && (!lead.last_contact_at || body.occurred_at > lead.last_contact_at)) patch.last_contact_at = body.occurred_at;
       if (body.next_follow_up !== null) patch.next_follow_up = body.next_follow_up;
-      ctx.db.update('leads', id, patch);
+      await ctx.db.update('leads', id, patch);
       if (body.advance_stage !== false && body.channel !== 'note') {
         const label = lead.company ?? lead.name;
-        if (lead.stage === 'lead' && direction === 'outbound') changeStage(ctx, actorOf(req), id, 'lead', 'contacted', label, lead.is_demo);
-        else if ((lead.stage === 'lead' || lead.stage === 'contacted') && direction === 'inbound') changeStage(ctx, actorOf(req), id, lead.stage, 'replied', label, lead.is_demo);
+        if (lead.stage === 'lead' && direction === 'outbound') await changeStage(ctx, actorOf(req), id, 'lead', 'contacted', label, lead.is_demo);
+        else if ((lead.stage === 'lead' || lead.stage === 'contacted') && direction === 'inbound') await changeStage(ctx, actorOf(req), id, lead.stage, 'replied', label, lead.is_demo);
       }
       return commId;
     });
     res.status(201).json({ id: commId });
   });
 
-  r.delete('/:id/activities/:commId', (req, res) => {
-    const changes = ctx.db.run('DELETE FROM communications WHERE id = :commId AND lead_id = :id', { id: idParam(req), commId: idParam(req, 'commId') }).changes;
+  r.delete('/:id/activities/:commId', async (req, res) => {
+    const changes = (await ctx.db.run('DELETE FROM communications WHERE id = :commId AND lead_id = :id', { id: idParam(req), commId: idParam(req, 'commId') })).changes;
     if (!changes) throw notFound('Log entry');
     res.json({ ok: true });
   });
 
   /** Won deal → client record (reuses the lead's details; outreach history is linked to the client). */
-  r.post('/:id/convert', (req, res) => {
+  r.post('/:id/convert', async (req, res) => {
     const id = idParam(req);
-    const lead = ctx.db.get<{ id: number; name: string; company: string | null; email: string | null; phone: string | null; website: string | null; social_url: string | null; deal_type: string; estimated_value_minor: number | null; currency: string; stage: LeadStage; client_id: number | null; notes: string | null; tags: string; is_demo: number; outcome_reason: string | null }>(
+    const lead = await ctx.db.get<{ id: number; name: string; company: string | null; email: string | null; phone: string | null; website: string | null; social_url: string | null; deal_type: string; estimated_value_minor: number | null; currency: string; stage: LeadStage; client_id: number | null; notes: string | null; tags: string; is_demo: number; outcome_reason: string | null }>(
       'SELECT * FROM leads WHERE id = :id',
       { id },
     );
     if (!lead) throw notFound('Lead');
-    if (lead.client_id && ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: lead.client_id })) throw conflict('This lead is already linked to a client.', { client_id: lead.client_id });
+    if (lead.client_id && await ctx.db.get('SELECT 1 FROM clients WHERE id = :id', { id: lead.client_id })) throw conflict('This lead is already linked to a client.', { client_id: lead.client_id });
     const body = parse(z.object({ outcome_reason: optionalText(1000) }), req.body ?? {});
     const now = ctx.nowIso();
-    const clientId = ctx.db.tx(() => {
+    const clientId = await ctx.db.tx(async () => {
       const socials: Record<string, string> = {};
       if (lead.social_url) {
         const s = lead.social_url.toLowerCase();
         const key = s.includes('instagram') ? 'instagram' : s.includes('youtube') ? 'youtube' : s.includes('tiktok') ? 'tiktok' : s.includes('linkedin') ? 'linkedin' : s.includes('x.com') || s.includes('twitter') ? 'x' : 'other';
         socials[key] = lead.social_url;
       }
-      const clientId = ctx.db.insert('clients', {
+      const clientId = await ctx.db.insert('clients', {
         name: lead.name,
         company: lead.company,
         email: lead.email,
@@ -356,19 +356,19 @@ export function leadsRouter(ctx: AppContext): Router {
         currency: lead.currency,
         retainer_minor: lead.deal_type === 'retainer' ? lead.estimated_value_minor : null,
         billing_cycle: 'monthly',
-        payment_terms_days: ctx.settings().default_payment_terms_days,
+        payment_terms_days: (await ctx.settings()).default_payment_terms_days,
         status: 'onboarding',
-        contract_start: ctx.today(),
+        contract_start: await ctx.today(),
         tags: lead.tags,
         notes: lead.notes,
         is_demo: lead.is_demo,
         created_at: now,
         updated_at: now,
       });
-      ctx.db.run('UPDATE leads SET client_id = :cid, outcome_reason = COALESCE(:reason, outcome_reason), updated_at = :now WHERE id = :id', { cid: clientId, reason: body.outcome_reason, now, id });
-      ctx.db.run('UPDATE communications SET client_id = :cid WHERE lead_id = :id', { cid: clientId, id });
-      if (lead.stage !== 'won') changeStage(ctx, actorOf(req), id, lead.stage, 'won', lead.company ?? lead.name, lead.is_demo);
-      logActivity(ctx, actorOf(req), {
+      await ctx.db.run('UPDATE leads SET client_id = :cid, outcome_reason = COALESCE(:reason, outcome_reason), updated_at = :now WHERE id = :id', { cid: clientId, reason: body.outcome_reason, now, id });
+      await ctx.db.run('UPDATE communications SET client_id = :cid WHERE lead_id = :id', { cid: clientId, id });
+      if (lead.stage !== 'won') await changeStage(ctx, actorOf(req), id, lead.stage, 'won', lead.company ?? lead.name, lead.is_demo);
+      await logActivity(ctx, actorOf(req), {
         entity_type: 'client',
         entity_id: clientId,
         client_id: clientId,

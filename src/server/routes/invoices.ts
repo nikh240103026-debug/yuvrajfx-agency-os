@@ -106,34 +106,34 @@ function toInput(body: z.output<typeof invoiceSchema>): InvoiceInput {
 export function invoicesRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const q = parse(listQuery, req.query);
-    const invoices = listInvoices(ctx, q);
+    const invoices = await listInvoices(ctx, q);
     const open = invoices.filter((i) => i.state === 'sent' && i.balance_minor > 0);
     res.json({
       invoices,
       totals: {
-        outstanding: sumByCurrency(open.map((i) => ({ currency: i.currency, amount_minor: i.balance_minor })), ctx.settings().base_currency),
-        overdue: sumByCurrency(open.filter((i) => i.status === 'overdue').map((i) => ({ currency: i.currency, amount_minor: i.balance_minor })), ctx.settings().base_currency),
+        outstanding: sumByCurrency(open.map((i) => ({ currency: i.currency, amount_minor: i.balance_minor })), (await ctx.settings()).base_currency),
+        overdue: sumByCurrency(open.filter((i) => i.status === 'overdue').map((i) => ({ currency: i.currency, amount_minor: i.balance_minor })), (await ctx.settings()).base_currency),
         drafts: invoices.filter((i) => i.state === 'draft').length,
       },
     });
   });
 
-  r.get('/meta', (_req, res) => {
-    const s = ctx.settings();
+  r.get('/meta', async (_req, res) => {
+    const s = await ctx.settings();
     res.json({
-      next_number: previewNextNumber(ctx),
+      next_number: await previewNextNumber(ctx),
       default_taxes: s.default_taxes,
       default_terms: s.default_invoice_terms,
       default_payment_terms_days: s.default_payment_terms_days,
-      today: ctx.today(),
+      today: await ctx.today(),
     });
   });
 
-  r.get('/export.csv', (req, res) => {
+  r.get('/export.csv', async (req, res) => {
     const q = parse(listQuery, req.query);
-    const rows = listInvoices(ctx, q);
+    const rows = await listInvoices(ctx, q);
     const csv = toCsv(rows, [
       { header: 'Invoice', value: (i) => i.number },
       { header: 'Client', value: (i) => i.client_company || i.client_name },
@@ -150,89 +150,89 @@ export function invoicesRouter(ctx: AppContext): Router {
       { header: 'Last payment', value: (i) => i.last_paid_at },
       { header: 'Demo data', value: (i) => (i.is_demo ? 'yes' : '') },
     ]);
-    sendCsv(ctx, res, 'invoices', csv);
+    await sendCsv(ctx, res, 'invoices', csv);
   });
 
-  r.get('/retainer-drafts', (req, res) => {
-    const month = typeof req.query.month === 'string' && /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : monthKey(ctx.today());
-    res.json({ month, clients: retainerDraftPreview(ctx, month) });
+  r.get('/retainer-drafts', async (req, res) => {
+    const month = typeof req.query.month === 'string' && /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : monthKey(await ctx.today());
+    res.json({ month, clients: await retainerDraftPreview(ctx, month) });
   });
 
-  r.post('/retainer-drafts', (req, res) => {
+  r.post('/retainer-drafts', async (req, res) => {
     const body = parse(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/), client_ids: z.array(z.number().int().positive()).optional() }), req.body);
-    const ids = createRetainerDrafts(ctx, actorOf(req), body.month, body.client_ids);
+    const ids = await createRetainerDrafts(ctx, actorOf(req), body.month, body.client_ids);
     res.status(201).json({ ids });
   });
 
-  r.post('/', (req, res) => {
+  r.post('/', async (req, res) => {
     const body = parse(invoiceSchema, req.body);
-    const id = createInvoice(ctx, actorOf(req), toInput(body));
-    res.status(201).json({ id, invoice: getInvoice(ctx, id) });
+    const id = await createInvoice(ctx, actorOf(req), toInput(body));
+    res.status(201).json({ id, invoice: await getInvoice(ctx, id) });
   });
 
-  r.get('/:id', (req, res) => {
-    const invoice = getInvoice(ctx, idParam(req));
+  r.get('/:id', async (req, res) => {
+    const invoice = await getInvoice(ctx, idParam(req));
     if (!invoice) throw notFound('Invoice');
-    res.json({ invoice, business: businessProfile(ctx) });
+    res.json({ invoice, business: await businessProfile(ctx) });
   });
 
-  r.put('/:id', (req, res) => {
+  r.put('/:id', async (req, res) => {
     const id = idParam(req);
     const body = parse(invoiceSchema, req.body);
-    updateInvoice(ctx, actorOf(req), id, toInput(body));
-    res.json({ invoice: getInvoice(ctx, id) });
+    await updateInvoice(ctx, actorOf(req), id, toInput(body));
+    res.json({ invoice: await getInvoice(ctx, id) });
   });
 
-  r.post('/:id/send', (req, res) => {
+  r.post('/:id/send', async (req, res) => {
     const id = idParam(req);
-    markInvoiceSent(ctx, actorOf(req), id);
-    res.json({ invoice: getInvoice(ctx, id) });
+    await markInvoiceSent(ctx, actorOf(req), id);
+    res.json({ invoice: await getInvoice(ctx, id) });
   });
 
-  r.post('/:id/revert-to-draft', (req, res) => {
+  r.post('/:id/revert-to-draft', async (req, res) => {
     const id = idParam(req);
-    revertInvoiceToDraft(ctx, actorOf(req), id);
-    res.json({ invoice: getInvoice(ctx, id) });
+    await revertInvoiceToDraft(ctx, actorOf(req), id);
+    res.json({ invoice: await getInvoice(ctx, id) });
   });
 
-  r.post('/:id/void', (req, res) => {
+  r.post('/:id/void', async (req, res) => {
     const id = idParam(req);
     const body = parse(z.object({ reason: optionalText(500) }), req.body ?? {});
-    voidInvoice(ctx, actorOf(req), id, body.reason);
-    res.json({ invoice: getInvoice(ctx, id) });
+    await voidInvoice(ctx, actorOf(req), id, body.reason);
+    res.json({ invoice: await getInvoice(ctx, id) });
   });
 
-  r.post('/:id/duplicate', (req, res) => {
-    const id = duplicateInvoice(ctx, actorOf(req), idParam(req));
+  r.post('/:id/duplicate', async (req, res) => {
+    const id = await duplicateInvoice(ctx, actorOf(req), idParam(req));
     res.status(201).json({ id });
   });
 
   /** Drafts a reminder/cover email into the outbox for approval. Nothing is sent from here. */
-  r.post('/:id/draft-email', (req, res) => {
+  r.post('/:id/draft-email', async (req, res) => {
     const id = idParam(req);
     const body = parse(z.object({ purpose: z.enum(['send', 'reminder']) }), req.body);
-    const outboxId = draftInvoiceEmail(ctx, id, body.purpose, 'manual');
+    const outboxId = await draftInvoiceEmail(ctx, id, body.purpose, 'manual');
     if (!outboxId) throw badRequest('This client has no email address. Add one on the client page first.');
     res.status(201).json({ outbox_id: outboxId });
   });
 
-  r.delete('/:id', (req, res) => {
-    deleteInvoice(ctx, actorOf(req), idParam(req));
+  r.delete('/:id', async (req, res) => {
+    await deleteInvoice(ctx, actorOf(req), idParam(req));
     res.json({ ok: true });
   });
 
-  r.post('/:id/payments', (req, res) => {
+  r.post('/:id/payments', async (req, res) => {
     const id = idParam(req);
     const body = parse(paymentSchema, req.body);
-    const result = recordPayment(ctx, actorOf(req), id, body);
-    res.status(201).json({ payment_id: result.id, status: result.status, balance_minor: result.balance_minor, invoice: getInvoice(ctx, id) });
+    const result = await recordPayment(ctx, actorOf(req), id, body);
+    res.status(201).json({ payment_id: result.id, status: result.status, balance_minor: result.balance_minor, invoice: await getInvoice(ctx, id) });
   });
 
   return r;
 }
 
-export function businessProfile(ctx: AppContext) {
-  const s = ctx.settings();
+export async function businessProfile(ctx: AppContext) {
+  const s = await ctx.settings();
   return {
     name: s.business_name,
     email: s.business_email,
@@ -250,7 +250,7 @@ export function paymentsRouter(ctx: AppContext): Router {
   const r = Router();
   const query = z.object({ q: qStr(), client_id: qInt(), method: qStr(), currency: qStr(), from: qStr(), to: qStr() });
 
-  function list(q: z.output<typeof query>) {
+  async function list(q: z.output<typeof query>) {
     const where: string[] = ['1 = 1'];
     const params: Record<string, unknown> = {};
     if (q.client_id) {
@@ -287,13 +287,13 @@ export function paymentsRouter(ctx: AppContext): Router {
     );
   }
 
-  r.get('/', (req, res) => {
-    const rows = list(parse(query, req.query));
-    res.json({ payments: rows, totals: sumByCurrency(rows, ctx.settings().base_currency) });
+  r.get('/', async (req, res) => {
+    const rows = await list(parse(query, req.query));
+    res.json({ payments: rows, totals: sumByCurrency(rows, (await ctx.settings()).base_currency) });
   });
 
-  r.get('/export.csv', (req, res) => {
-    const rows = list(parse(query, req.query));
+  r.get('/export.csv', async (req, res) => {
+    const rows = await list(parse(query, req.query));
     const csv = toCsv(rows, [
       { header: 'Date', value: (p) => p.paid_at },
       { header: 'Invoice', value: (p) => p.number },
@@ -306,11 +306,11 @@ export function paymentsRouter(ctx: AppContext): Router {
       { header: 'Recorded by', value: (p) => p.recorded_by },
       { header: 'Demo data', value: (p) => (p.is_demo ? 'yes' : '') },
     ]);
-    sendCsv(ctx, res, 'payments', csv);
+    await sendCsv(ctx, res, 'payments', csv);
   });
 
-  r.delete('/:id', (req, res) => {
-    deletePayment(ctx, actorOf(req), idParam(req));
+  r.delete('/:id', async (req, res) => {
+    await deletePayment(ctx, actorOf(req), idParam(req));
     res.json({ ok: true });
   });
 

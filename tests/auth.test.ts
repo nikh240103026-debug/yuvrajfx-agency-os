@@ -4,7 +4,7 @@ import { client, makeApp, ok, OWNER, ownerClient } from './helpers.ts';
 
 describe('authentication', () => {
   test('first-run setup creates the owner once, then only sign-in works', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const anon = client(app);
     expect(ok<{ needs_setup: boolean }>(await anon.get('/api/auth/state')).needs_setup).toBe(true);
     const owner = await ownerClient(app);
@@ -17,7 +17,7 @@ describe('authentication', () => {
   });
 
   test('behind a tunnel: setup is refused, cookies are Secure, rate limit is per visitor IP', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const setup = { name: 'X', email: 'x@y.test', password: 'another long password', business_name: 'X', base_currency: 'USD', timezone: 'UTC' };
     const viaTunnel = await client(app).post('/api/auth/setup', setup).set('Cf-Connecting-Ip', '203.0.113.9');
     expect(viaTunnel.status).toBe(403);
@@ -34,14 +34,14 @@ describe('authentication', () => {
   });
 
   test('weak passwords are rejected at setup', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await client(app).post('/api/auth/setup', { name: 'Y', email: 'y@y.test', password: 'short', business_name: 'Y', base_currency: 'INR', timezone: 'Asia/Kolkata' });
     expect(res.status).toBe(400);
     expect(res.body.error.details.fields.password).toBeTruthy();
   });
 
   test('login, wrong password, logout', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await ownerClient(app);
     const c = client(app);
     expect((await c.post('/api/auth/login', { email: OWNER.email, password: 'wrong password!!' })).status).toBe(401);
@@ -52,7 +52,7 @@ describe('authentication', () => {
   });
 
   test('API requires a session and the CSRF header on writes', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     expect((await request(app).get('/api/clients')).status).toBe(401);
     const owner = await ownerClient(app);
     // Same session, but a write without the app header (what a cross-site form would send) is blocked.
@@ -63,7 +63,7 @@ describe('authentication', () => {
   });
 
   test('repeated failed logins are rate-limited', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await ownerClient(app);
     const c = client(app);
     for (let i = 0; i < 10; i++) await c.post('/api/auth/login', { email: OWNER.email, password: `nope-nope-${i}` });
@@ -72,7 +72,7 @@ describe('authentication', () => {
   });
 
   test('team members cannot reach money or settings, and see no prices', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const owner = await ownerClient(app);
     const cid = ok<{ id: number }>(await owner.post('/api/clients', { name: 'Ava', currency: 'USD', retainer_minor: 100000 }), 201).id;
     ok(await owner.post('/api/projects', { client_id: cid, name: 'Ad', type: 'ad', price_minor: 50000 }), 201);

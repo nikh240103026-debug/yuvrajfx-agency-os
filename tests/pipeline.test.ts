@@ -5,7 +5,7 @@ type G = { currency: string; amount_minor: number }[];
 
 describe('sales pipeline', () => {
   test('duplicate detection against leads and clients, with explicit override', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     await createClient(api, { website: 'https://www.northwind.test' });
     ok(await api.post('/api/leads', { name: 'Ava Collins', company: 'Brightside Labs Inc.', email: 'ava@brightside.test', currency: 'USD' }), 201);
@@ -24,7 +24,7 @@ describe('sales pipeline', () => {
   });
 
   test('stages, history, weighted value per currency, conversion and win/loss', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const mk = async (name: string, stage: string, value: number, currency = 'USD', deal_type = 'retainer') =>
       ok<{ id: number }>(await api.post('/api/leads', { name, company: `${name} Co`, stage, estimated_value_minor: value, currency, deal_type, source: 'cold_email' }), 201).id;
@@ -70,7 +70,7 @@ describe('sales pipeline', () => {
   });
 
   test('logging outreach updates last contact, follow-up and advances early stages', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const id = ok<{ id: number }>(await api.post('/api/leads', { name: 'Karan', company: 'Stackwise', currency: 'INR' }), 201).id;
     ok(await api.post(`/api/leads/${id}/activities`, { channel: 'email', direction: 'outbound', subject: 'Intro', occurred_at: '2026-10-25', next_follow_up: '2026-10-27' }), 201);
@@ -87,7 +87,7 @@ describe('sales pipeline', () => {
   });
 
   test('won lead converts into a client with its outreach history', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const id = ok<{ id: number }>(await api.post('/api/leads', { name: 'Noah Kim', company: 'Pixel Forge', email: 'noah@pixelforge.test', estimated_value_minor: 220000, currency: 'USD', stage: 'negotiation', social_url: 'https://youtube.com/@pixelforge' }), 201).id;
     ok(await api.post(`/api/leads/${id}/activities`, { channel: 'call', occurred_at: '2026-10-20' }), 201);
@@ -105,7 +105,7 @@ describe('sales pipeline', () => {
   });
 
   test('CSV import: preview with validation and duplicates, import skips them, export round-trips', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     ok(await api.post('/api/leads', { name: 'Existing', company: 'Kettle & Co', email: 'hello@kettle.test', currency: 'INR' }), 201);
     const csv = [

@@ -13,8 +13,8 @@ export type AppContext = {
   mailer: Mailer;
   nowIso(): string;
   /** Today's date in the business timezone (Settings → timezone). */
-  today(): string;
-  settings(): Settings;
+  today(): Promise<string>;
+  settings(): Promise<Settings>;
   invalidateSettings(): void;
 };
 
@@ -27,8 +27,8 @@ export function createContext(opts: { db: Db; config: Config; mailer: Mailer; cl
     clock,
     mailer: opts.mailer,
     nowIso: () => clock.now().toISOString(),
-    today: () => todayIn(ctx.settings().timezone, clock.now()),
-    settings: () => (cached ??= readSettings(opts.db)),
+    today: async () => todayIn((await ctx.settings()).timezone, clock.now()),
+    settings: async () => (cached ??= await readSettings(opts.db)),
     invalidateSettings: () => {
       cached = null;
     },

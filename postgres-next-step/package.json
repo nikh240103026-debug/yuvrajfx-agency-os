@@ -1,0 +1,55 @@
+{
+  "name": "yuvrajfx-agency-os",
+  "version": "1.0.0",
+  "private": true,
+  "description": "YuvrajFX Agency OS: clients, projects, deliverables, invoices, finance, pipeline, tasks and a client portal for a video-editing agency.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --watch-path=src/server --watch-path=src/shared --watch-preserve-output src/server/index.ts --dev",
+    "build": "node scripts/build.ts",
+    "start": "node --disable-warning=ExperimentalWarning src/server/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json --singleThreaded",
+    "migrate": "node --disable-warning=ExperimentalWarning scripts/migrate.ts",
+    "seed:demo": "node --disable-warning=ExperimentalWarning scripts/demo.ts load",
+    "demo:remove": "node --disable-warning=ExperimentalWarning scripts/demo.ts remove",
+    "user:create": "node --disable-warning=ExperimentalWarning scripts/create-user.ts",
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
+    "@tanstack/react-query": "5.105.0",
+    "clsx": "2.1.1",
+    "express": "5.3.0",
+    "helmet": "8.3.0",
+    "lucide-react": "1.62.0",
+    "nodemailer": "10.2.1",
+    "pg": "^8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router": "8.5.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.5",
+    "@types/nodemailer": "8.0.2",
+    "@types/pg": "^8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/supertest": "7.2.1",
+    "@vitejs/plugin-react": "6.1.2",
+    "supertest": "7.3.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

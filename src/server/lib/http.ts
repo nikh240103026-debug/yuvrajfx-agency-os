@@ -67,6 +67,14 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
 /** Map our trigger/constraint codes (see migrations) to friendly API errors. */
 export function translateDbError(err: unknown): never {
   const msg = err instanceof Error ? err.message : String(err);
+  const pg = err as { code?: string; constraint?: string };
+  if (pg?.code === '23505') {
+    if (pg.constraint?.includes('invoice') && pg.constraint?.includes('number')) throw conflict('That invoice number is already used.');
+    if (pg.constraint?.includes('users_email')) throw conflict('A user with that email already exists.');
+    if (pg.constraint === 'invoices_retainer_period') throw conflict('A retainer invoice for this client and period already exists.');
+    throw conflict('A record with the same unique value already exists.');
+  }
+  if (pg?.code === '23503') throw conflict('This record is still referenced by other records.');
   const map: [string, () => HttpError][] = [
     ['PAYMENT_EXCEEDS_BALANCE', () => conflict('That payment is more than the outstanding balance.')],
     ['PAYMENT_CURRENCY_MISMATCH', () => badRequest('Payment currency must match the invoice currency.')],

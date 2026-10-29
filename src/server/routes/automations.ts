@@ -11,20 +11,20 @@ import { json } from '../db/db.ts';
 export function automationsRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (_req, res) => {
-    const runs = ctx.db
-      .all<{ id: number; trigger: string; started_at: string; finished_at: string | null; status: string; summary: string; error: string | null }>('SELECT * FROM automation_runs ORDER BY id DESC LIMIT 20')
+  r.get('/', async (_req, res) => {
+    const runs = await (await ctx.db
+      .all<{ id: number; trigger: string; started_at: string; finished_at: string | null; status: string; summary: string; error: string | null }>('SELECT * FROM automation_runs ORDER BY id DESC LIMIT 20'))
       .map((run) => ({ ...run, summary: json(run.summary, {}) }));
     res.json({
-      automations: listAutomations(ctx),
+      automations: await listAutomations(ctx),
       runs,
       email: { configured: ctx.mailer.configured, description: ctx.mailer.description },
-      owner_report_email: ctx.settings().owner_report_email || null,
-      pending_approval: ctx.db.value<number>(`SELECT COUNT(*) FROM outbox WHERE status = 'pending_approval'`) ?? 0,
+      owner_report_email: (await ctx.settings()).owner_report_email || null,
+      pending_approval: await ctx.db.value<number>(`SELECT COUNT(*) FROM outbox WHERE status = 'pending_approval'`) ?? 0,
     });
   });
 
-  r.patch('/:key', (req, res) => {
+  r.patch('/:key', async (req, res) => {
     const key = req.params.key as AutomationKey;
     if (!AUTOMATION_KEYS.includes(key)) throw notFound('Automation');
     const body = parse(
@@ -34,13 +34,13 @@ export function automationsRouter(ctx: AppContext): Router {
       }),
       req.body,
     );
-    saveAutomation(ctx, key, body);
+    await saveAutomation(ctx, key, body);
     res.json({ ok: true });
   });
 
-  r.post('/run', (req, res) => {
+  r.post('/run', async (req, res) => {
     const body = parse(z.object({ keys: z.array(z.enum(AUTOMATION_KEYS)).optional() }), req.body ?? {});
-    res.json(runAutomations(ctx, 'manual', body.keys));
+    res.json(await runAutomations(ctx, 'manual', body.keys));
   });
 
   r.post('/test-email', async (_req, res) => {
@@ -54,9 +54,9 @@ export function automationsRouter(ctx: AppContext): Router {
 export function outboxRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const status = typeof req.query.status === 'string' && (OUTBOX_STATUSES as readonly string[]).includes(req.query.status) ? req.query.status : null;
-    const rows = ctx.db.all(
+    const rows = await ctx.db.all(
       `SELECT o.*, COALESCE(c.company, c.name) AS client_name, u.name AS approved_by_name
          FROM outbox o LEFT JOIN clients c ON c.id = o.client_id LEFT JOIN users u ON u.id = o.approved_by
         ${status ? 'WHERE o.status = :status' : ''}
@@ -66,9 +66,9 @@ export function outboxRouter(ctx: AppContext): Router {
     res.json({ messages: rows, email: { configured: ctx.mailer.configured, description: ctx.mailer.description } });
   });
 
-  r.patch('/:id', (req, res) => {
+  r.patch('/:id', async (req, res) => {
     const id = idParam(req);
-    const row = ctx.db.get<{ status: string }>('SELECT status FROM outbox WHERE id = :id', { id });
+    const row = await ctx.db.get<{ status: string }>('SELECT status FROM outbox WHERE id = :id', { id });
     if (!row) throw notFound('Message');
     if (row.status !== 'pending_approval' && row.status !== 'failed') throw conflict('Only messages waiting for approval can be edited.');
     const body = parse(
@@ -84,7 +84,7 @@ export function outboxRouter(ctx: AppContext): Router {
       }),
       req.body,
     );
-    ctx.db.update('outbox', id, { ...body, updated_at: ctx.nowIso() });
+    await ctx.db.update('outbox', id, { ...body, updated_at: ctx.nowIso() });
     res.json({ ok: true });
   });
 
@@ -95,14 +95,14 @@ export function outboxRouter(ctx: AppContext): Router {
     res.json(result);
   });
 
-  r.post('/:id/mark-sent', (req, res) => {
-    markSentManually(ctx, actorOf(req), idParam(req));
+  r.post('/:id/mark-sent', async (req, res) => {
+    await markSentManually(ctx, actorOf(req), idParam(req));
     res.json({ ok: true });
   });
 
-  r.post('/:id/discard', (req, res) => {
+  r.post('/:id/discard', async (req, res) => {
     const id = idParam(req);
-    const changes = ctx.db.run(`UPDATE outbox SET status = 'rejected', updated_at = :now WHERE id = :id AND status IN ('pending_approval','failed')`, { now: ctx.nowIso(), id }).changes;
+    const changes = (await ctx.db.run(`UPDATE outbox SET status = 'rejected', updated_at = :now WHERE id = :id AND status IN ('pending_approval','failed')`, { now: ctx.nowIso(), id })).changes;
     if (!changes) throw conflict('This message was already handled.');
     res.json({ ok: true });
   });

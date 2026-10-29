@@ -3,7 +3,7 @@ import { client, createClient, createInvoice, makeApp, ok, ownerClient, type Api
 
 /** Two clients, each with a project, deliverables, invoices and a portal login. */
 async function world() {
-  const { app } = makeApp();
+  const { app } = await makeApp();
   const owner = await ownerClient(app);
   const a = await createClient(owner, { name: 'Liam Carter', company: 'Northwind', email: 'liam@northwind.test' });
   const b = await createClient(owner, { name: 'Priya Nair', company: 'Lumen', email: 'priya@lumen.test', currency: 'INR' });

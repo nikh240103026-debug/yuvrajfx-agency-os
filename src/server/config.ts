@@ -20,7 +20,6 @@ export type SmtpConfig = {
 export type Config = {
   host: string;
   port: number;
-  dbPath: string;
   databaseUrl: string | null;
   cookieSecure: boolean;
   isDev: boolean;
@@ -45,19 +44,12 @@ export function loadConfig(argv: string[] = process.argv): Config {
   }
 
   const env = process.env;
-  const dbPath =
-    flag(argv, 'db') || env.DB_PATH?.trim() || 'data/agency.db';
-
   const smtpHost = env.SMTP_HOST?.trim();
   const databaseUrl = env.DATABASE_URL?.trim() || null;
 
   return {
     host: env.HOST?.trim() || '127.0.0.1',
     port: Number(flag(argv, 'port')) || Number(env.PORT) || 4747,
-    dbPath:
-      dbPath === ':memory:'
-        ? dbPath
-        : path.resolve(ROOT, dbPath),
     databaseUrl,
     cookieSecure: bool(env.COOKIE_SECURE),
     isDev: argv.includes('--dev'),

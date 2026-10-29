@@ -5,7 +5,7 @@ type Inv = { id: number; number: string; status: string; state: string; total_mi
 
 describe('invoices', () => {
   test('line items, discount and taxes produce the stored totals; numbers are sequential', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api, { currency: 'INR', retainer_minor: 8500000 });
     const { invoice } = await createInvoice(api, cid, {
@@ -36,7 +36,7 @@ describe('invoices', () => {
   });
 
   test('validation: dates, empty items, negative rates, foreign project', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const a = await createClient(api);
     const b = await createClient(api, { name: 'Other', company: 'Other Co' });
@@ -49,7 +49,7 @@ describe('invoices', () => {
   });
 
   test('partial payments, balance, paid only when covered, no overpayment, deleting a payment reopens it', async () => {
-    const { app, db } = makeApp();
+    const { app, db } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const { id } = await createInvoice(api, cid, { issue_date: '2026-10-20', due_date: '2026-11-03', items: [{ description: 'Ad', quantity: 1, unit_price_minor: 120000 }] });
@@ -72,8 +72,8 @@ describe('invoices', () => {
     expect((await api.post(`/api/invoices/${id}/payments`, { amount_minor: 1, paid_at: '2026-10-25', method: 'paypal' })).status).toBe(409);
 
     // The database itself refuses an overpayment even if application code were bypassed.
-    expect(() => db.run(`INSERT INTO payments (invoice_id, client_id, amount_minor, currency, paid_at, method) VALUES (:id, :cid, 1, 'USD', '2026-10-25', 'cash')`, { id, cid })).toThrow(/PAYMENT_EXCEEDS_BALANCE/);
-    expect(() => db.run(`INSERT INTO payments (invoice_id, client_id, amount_minor, currency, paid_at, method) VALUES (:id, :cid, 1, 'INR', '2026-10-25', 'cash')`, { id, cid })).toThrow();
+    expect(async () => await db.run(`INSERT INTO payments (invoice_id, client_id, amount_minor, currency, paid_at, method) VALUES (:id, :cid, 1, 'USD', '2026-10-25', 'cash')`, { id, cid })).toThrow(/PAYMENT_EXCEEDS_BALANCE/);
+    expect(async () => await db.run(`INSERT INTO payments (invoice_id, client_id, amount_minor, currency, paid_at, method) VALUES (:id, :cid, 1, 'INR', '2026-10-25', 'cash')`, { id, cid })).toThrow();
 
     // Lowering the total below what was paid is refused.
     const lower = await api.put(`/api/invoices/${id}`, { client_id: cid, currency: 'USD', issue_date: '2026-10-20', due_date: '2026-11-03', items: [{ description: 'Ad', quantity: 1, unit_price_minor: 100000 }] });
@@ -90,7 +90,7 @@ describe('invoices', () => {
   });
 
   test('overdue is derived from the due date and the business timezone', async () => {
-    const { app, setNow } = makeApp({ now: '2026-11-03T12:00:00.000Z' });
+    const { app, setNow } = await makeApp({ now: '2026-11-03T12:00:00.000Z' });
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const { id } = await createInvoice(api, cid, { issue_date: '2026-10-27', due_date: '2026-11-03' });
@@ -106,7 +106,7 @@ describe('invoices', () => {
   });
 
   test('outstanding totals stay per currency', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const usd = await createClient(api);
     const inr = await createClient(api, { name: 'Priya', company: 'Lumen', currency: 'INR' });
@@ -122,7 +122,7 @@ describe('invoices', () => {
   });
 
   test('drafts delete, sent invoices void, duplicates copy lines', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const draft = await createInvoice(api, cid);
@@ -141,7 +141,7 @@ describe('invoices', () => {
   });
 
   test('retainer drafts are created once per client per period', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     await createClient(api, { contract_start: '2026-06-01' });
     await createClient(api, { name: 'Q', company: 'Quarterly Co', billing_cycle: 'quarterly', contract_start: '2026-08-01', retainer_minor: 600000 });
@@ -160,7 +160,7 @@ describe('invoices', () => {
   });
 
   test('CSV export of invoices and payment history search', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const api = await ownerClient(app);
     const cid = await createClient(api);
     const { id } = await createInvoice(api, cid, { due_date: '2026-11-08' });

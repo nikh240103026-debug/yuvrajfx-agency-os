@@ -17,8 +17,8 @@ const rangeQuery = z.object({
   to: z.string().optional(),
 });
 
-function resolveRange(ctx: AppContext, q: z.output<typeof rangeQuery>) {
-  const today = ctx.today();
+async function resolveRange(ctx: AppContext, q: z.output<typeof rangeQuery>) {
+  const today = await ctx.today();
   if (q.period === 'custom') {
     if (!q.from || !q.to || !isValidDate(q.from) || !isValidDate(q.to)) throw badRequest('Pick a valid start and end date.');
     if (q.to < q.from) throw badRequest('The end date is before the start date.');
@@ -74,40 +74,40 @@ function reportRows(report: ReturnType<typeof periodReport>): ReportRow[] {
 export function financeRouter(ctx: AppContext): Router {
   const r = Router();
 
-  r.get('/summary', (req, res) => {
-    const range = resolveRange(ctx, parse(rangeQuery, req.query));
-    res.json({ range, ...financeSummary(ctx, range.start, range.end) });
+  r.get('/summary', async (req, res) => {
+    const range = await resolveRange(ctx, parse(rangeQuery, req.query));
+    res.json({ range, ...await financeSummary(ctx, range.start, range.end) });
   });
 
-  r.get('/report', (req, res) => {
+  r.get('/report', async (req, res) => {
     const q = parse(rangeQuery, req.query);
     if (q.period === 'custom') throw badRequest('Reports are monthly, quarterly or annual.');
-    const anchor = q.date && isValidDate(q.date) ? q.date : ctx.today();
-    res.json(periodReport(ctx, (q.period ?? 'month') as PeriodKind, anchor));
+    const anchor = q.date && isValidDate(q.date) ? q.date : await ctx.today();
+    res.json(await periodReport(ctx, (q.period ?? 'month') as PeriodKind, anchor));
   });
 
-  r.get('/report.csv', (req, res) => {
+  r.get('/report.csv', async (req, res) => {
     const q = parse(rangeQuery, req.query);
-    const anchor = q.date && isValidDate(q.date) ? q.date : ctx.today();
+    const anchor = q.date && isValidDate(q.date) ? q.date : await ctx.today();
     const kind = (q.period === 'custom' ? 'month' : q.period ?? 'month') as PeriodKind;
-    const report = periodReport(ctx, kind, anchor);
+    const report = await periodReport(ctx, kind, anchor);
     const csv = toCsv(reportRows(report), [
       { header: 'Section', value: (x) => x.section },
       { header: 'Metric', value: (x) => x.metric },
       { header: 'Currency', value: (x) => x.currency },
       { header: 'Amount', value: (x) => x.amount },
     ]);
-    sendCsv(ctx, res, `report-${report.period.label.toLowerCase().replace(/\s+/g, '-')}`, csv);
+    await sendCsv(ctx, res, `report-${report.period.label.toLowerCase().replace(/\s+/g, '-')}`, csv);
   });
 
-  r.get('/snapshots', (_req, res) => {
+  r.get('/snapshots', async (_req, res) => {
     res.json({
-      snapshots: ctx.db.all('SELECT id, kind, period_start, period_end, created_at, is_demo FROM report_snapshots ORDER BY period_start DESC, id DESC LIMIT 200'),
+      snapshots: await ctx.db.all('SELECT id, kind, period_start, period_end, created_at, is_demo FROM report_snapshots ORDER BY period_start DESC, id DESC LIMIT 200'),
     });
   });
 
-  r.get('/snapshots/:id', (req, res) => {
-    const row = ctx.db.get<{ id: number; kind: string; period_start: string; period_end: string; data: string; created_at: string }>(
+  r.get('/snapshots/:id', async (req, res) => {
+    const row = await ctx.db.get<{ id: number; kind: string; period_start: string; period_end: string; data: string; created_at: string }>(
       'SELECT * FROM report_snapshots WHERE id = :id',
       { id: Number(req.params.id) || 0 },
     );
